@@ -2,7 +2,7 @@
 
 const $ = id => document.getElementById(id);
 const app = {state:null, agents:[], assets:[], revision:-1, connected:false,
-  received:0, serverTime:0, tab:'overview', pending:0, polling:false, exchange:null, ticket:null, notices:null};
+  received:0, serverTime:0, tab:'overview', pending:0, polling:false, exchange:null, ticket:null, notices:null,desktopAlerts:false};
 const tabs = ['overview','market','decisions','agents','portfolio','risk','history','system','exchange'];
 const sek = new Intl.NumberFormat('sv-SE',{style:'currency',currency:'SEK',maximumFractionDigits:2});
 const eur = new Intl.NumberFormat('sv-SE',{style:'currency',currency:'EUR',maximumFractionDigits:2});
@@ -91,8 +91,15 @@ function apply(snapshot){
   const revision=snapshot.state.revision||0;
   if(revision<app.revision)return;
   app.revision=revision;app.state=snapshot.state;app.agents=snapshot.agents;app.assets=snapshot.assets;
-  const notices=new Set(app.state.notifications.map(n=>n.tick+'|'+n.msg));
-  if(app.notices)for(const entry of [...app.state.notifications].reverse())if(!app.notices.has(entry.tick+'|'+entry.msg))toast(entry.msg);
+  const key=n=>n.id||n.tick+'|'+n.msg;
+  const notices=new Set(app.state.notifications.map(key));
+  if(app.notices)for(const entry of [...app.state.notifications].reverse())if(!app.notices.has(key(entry))){
+    if(entry.kind==='CRYPTO_SIGNAL'&&(!dataFresh()||Date.parse(entry.validUntil)<=app.serverTime))continue;
+    toast(entry.msg+(entry.kind==='CRYPTO_SIGNAL'?' Gäller till '+localTime(entry.validUntil)+'.':''));
+    if(entry.kind==='CRYPTO_SIGNAL'&&app.desktopAlerts&&window.Notification?.permission==='granted'){
+      try{new Notification('JARVIS CHEF',{body:entry.msg+' Gäller till '+localTime(entry.validUntil)+'.',tag:entry.id});}catch(error){app.desktopAlerts=false;}
+    }
+  }
   app.notices=notices;
   render();
 }
@@ -256,8 +263,28 @@ function candleChart(all){
   for(const [c,x] of [[candles[0],65],[candles.at(-1),750]]){const label=svgNode('text',{x,y:285});label.textContent=localTime(c.time*1000).slice(6,11);chart.append(label);}
 }
 function renderDecisions(){
+  const s=app.state,labels={BUY:'Möjligt köpläge',SELL:'Möjligt säljläge om du äger',WAIT:'Avvakta',BLOCKED:'Riskpaus'};
+  text('overview-advisory',['BTC-SIM','ETH-SIM'].map(symbol=>{
+    const r=s.chefSignals?.[symbol],fresh=r&&dataFresh()&&Date.parse(r.validUntil)>app.serverTime+(performance.now()-app.received);
+    return (symbol==='BTC-SIM'?'BTC: ':'ETH: ')+(fresh?labels[r.side]:'Inväntar färska data');
+  }).join(' · '));
+  $('chef-signals').replaceChildren(...['BTC-SIM','ETH-SIM'].map(symbol=>{
+    const report=s.chefSignals?.[symbol],fresh=report&&dataFresh()&&Date.parse(report.validUntil)>app.serverTime+(performance.now()-app.received);
+    return node('article',{class:'panel'},[node('h3',{text:symbol==='BTC-SIM'?'CHEF · BTC/EUR':'CHEF · ETH/EUR'}),
+      badge(fresh?labels[report.side]:'Avvakta · ingen färsk bedömning',fresh&&report.side==='BUY'?'good':fresh&&report.side==='SELL'?'warn':''),
+      node('p',{text:fresh?report.reason:'Inväntar färska kryptodata och en aktuell avslutad stapel. Starta bevakningsläget eller uppdatera marknaden.'}),
+      node('p',{class:'caption',text:'Stapel avslutad: '+localTime(report?.closedAt)+' · Referenskurs: '+euro(report?.referenceEUR)}),
+      node('p',{class:'caption',text:'Bedömningen skickar ingen order. Verkligt konto, innehav och orderrisk är inte kontrollerade.'})]);
+  }));
+  rows('agent-report-rows',Object.values(s.agentReports||{}).map(r=>[r.agent+' · '+(r.instrument==='BTC-SIM'?'BTC/EUR':'ETH/EUR'),localTime(r.checkedAt),
+    badge(dataFresh()&&r.status==='reading'&&Date.parse(r.closedAt)+300000>app.serverTime+(performance.now()-app.received)?(r.eligible?(labels[r.side]||'Avvakta'):'Skuggranskning'):'Inväntar färska data'),
+    node('span',{class:'explain',text:r.reason+' '+r.conditions})]),'Inväntar den första kurshämtningen. Ingen insättning behövs.',4);
+  const notices=s.notifications.filter(n=>n.kind==='CRYPTO_SIGNAL').slice(0,50);
+  $('crypto-notices').replaceChildren(...(notices.length?notices.map(n=>node('div',{class:'event'},[
+    node('small',{text:localTime(n.date)+(!dataFresh()||Date.parse(n.validUntil)<=app.serverTime+(performance.now()-app.received)?' · Historisk signal':' · Bevakningssignal')}),node('span',{text:n.msg})])):
+    [node('p',{class:'muted',text:'Inget nytt köp-/säljläge ännu. CHEF avvaktar när strategierna är oense; meddelanden skapas inte vid varje kursuppdatering.'})]));
   rows('decision-rows',(app.state.lastDecisions||[]).slice(0,100).map(d=>[localTime(d.at),d.agent,d.instrument,badge(d.side,d.side==='BUY'?'good':d.side==='SELL'?'warn':''),node('span',{class:'explain',text:d.reason})]),
-    'Ingen ny femminutersstapel har granskats ännu. Uppdatera först marknaden och starta sedan paper-motorn.',5);
+    'Inga paper-handelsbeslut. Bevakningsrapporterna visas ovan och kräver inte start av paper-motorn.',5);
 }
 function renderSession(){
   const s=app.state;
@@ -383,6 +410,15 @@ for(const [id,file] of [['export','trades.csv'],['export-capital','capital.csv']
   const link=node('a',{href:'/api/export/'+file,download:file});link.click();
 };
 $('refresh-status').onclick=()=>poll();
+$('enable-alerts').onclick=async()=>{
+  if(app.desktopAlerts){app.desktopAlerts=false;text('enable-alerts','Aktivera skrivbordsnotiser');return;}
+  if(!('Notification' in window)){showError('Den här webbläsaren stöder inte skrivbordsnotiser. Meddelanden visas ändå här.');return;}
+  try{
+    app.desktopAlerts=await Notification.requestPermission()==='granted';
+    text('enable-alerts',app.desktopAlerts?'Skrivbordsnotiser aktiverade':'Skrivbordsnotiser ej tillåtna');
+    if(!app.desktopAlerts)showError('Webbläsaren tillåter inte skrivbordsnotiser. CHEF:s meddelanden sparas ändå i Beslut och Historik.');
+  }catch(error){showError('Notiser kunde inte aktiveras. Meddelanden finns i dashboarden.');}
+};
 $('refresh-market').onclick=()=>command('refresh-market');
 $('exchange-check').onclick=()=>exchangeAction('check');
 $('live-form').addEventListener('submit',event=>{
@@ -393,4 +429,4 @@ $('live-form').addEventListener('submit',event=>{
 for(const action of ['validate','submit','reconcile','cancel'])$('live-'+action).onclick=()=>{if(app.ticket)exchangeAction(action,{ticket:app.ticket.id});};
 poll();refreshExchange();
 setInterval(poll,2000);
-setInterval(renderHealth,1000);
+setInterval(()=>{renderHealth();if(app.state&&['overview','decisions'].includes(app.tab))renderDecisions();},1000);

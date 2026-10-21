@@ -69,6 +69,40 @@ Se [Nordnet och återstående anslutning](docs/NORDNET.md).
 CHEF kan fördela paper-budgetar, men ingen automatisk livebudget eller agenthandel
 mot Kraken är implementerad. En framtida insättning aktiverar inte agenthandel.
 
+## Agentrapporter och meddelanden från CHEF
+
+I **Beslut** visas aktuell kryptobevakning även när paper-motorn är pausad och
+Kraken-kontot saknar pengar. GAMMA granskar BTC/ETH med momentum, ZETA granskar
+BTC/ETH med mean reversion och IOTA granskar BTC med trendstrategin. Övriga
+agenter följer fortsatt syntetiska aktier/ETF. Senaste läsning, avslutad stapel,
+regelunderlag och köp-/säljvillkor visas per agent. Det är befintliga regelbaserade
+strategier; inga externa språkmodeller anropas.
+
+CHEF visar möjligt köp-/säljläge först när minst två olika strategier är överens
+och ingen behörig granskare ger motsatt signal. Klonade agenter ger inte fler
+röster för samma strategi. Karantänsagenter visas men räknas inte som stöd;
+riskpaus blockerar köp. Oenighet, otillräckligt underlag eller gamla data ger
+**Avvakta**. Fler agenter betyder därför inte automatiskt fler köpsignaler.
+
+Meddelanden sparas i **Beslut → Meddelanden från CHEF** och **Historik**. Nya
+signaländringar ger en toast på den öppna sidan. Samma signal på samma stapel
+skickas inte om efter polling, riskpausväxling eller processomstart. Oförändrat
+läge på nästa stapel ger inget nytt meddelande. Signaler löper ut vid nästa
+femminutersgräns och presenteras inte som aktuella när kurserna blivit gamla.
+
+Knappen **Aktivera skrivbordsnotiser** begär webbläsarens tillåtelse, efter ditt
+klick. Den gäller den öppna sidans session; sidan måste vara öppen, även om den
+ligger i bakgrunden. Ingen push-tjänst, e-post eller SMS är ansluten. Om sidan är
+stängd fortsätter Python samla rapporter/meddelanden i bevakningsläget, men inga
+skrivbordsnotiser levereras då. Historiken visas när du öppnar sidan igen och
+spelas inte upp som nya notiser vid omladdning.
+
+Bedömningarna utför inga order och förbrukar inte paper-motorns handelsbeslut.
+De kontrollerar inte verkligt saldo, innehav eller orderrisk. Ett säljläge betyder
+att granska en eventuell befintlig position, inte att blanka. Referenspris är
+stapelns slutkurs i EUR, inte ett föreslaget limitpris. Det finns ingen garanti
+att signalen leder till en lönsam affär.
+
 ## Data och paper-exekvering
 
 - Kraken publika BTC/ETH-tickers och orderdjup i EUR; ECB:s daterade dagliga
@@ -183,6 +217,7 @@ python3 -m unittest discover -s tests -v
 node --check dashboard.js
 # Valfritt: Playwright + installerad Chromium
 CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_smoke.py
+CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_advisory.py
 ```
 
 Sviten testar bland annat hårda krascher före/efter commit, misslyckad journalskrivning,

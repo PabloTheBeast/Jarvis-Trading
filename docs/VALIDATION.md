@@ -2,7 +2,7 @@
 
 Utförd 2026-10-21 i molnmiljön med Python 3.12.14, Node 24.19.0 och systemets Chromium.
 
-- **88 enhets-/API-tester passerade**, inga överhoppade tester. Befintliga tester för
+- **95 enhets-/API-tester passerade**, inga överhoppade tester. Befintliga tester för
   kapital, risk, migration, backup, hårda subprocesskrascher, 500 steg och åtta
   simulerade dygn passerar fortsatt. Simulerad tid bevisar inte långvarig drift.
 - Nya regressionstester täcker avslutade OHLC-staplar, luckor/gamla data, oberoende
@@ -47,3 +47,15 @@ Kursfel stoppar inte kontoläsning. Ingen finansierad order skickades.
 Ett separat Chromium-test av bevakningsläget passerade med simulerat nollsaldo:
 läget visas i Kraken-vyn, preview/submit är avstängda, inga JavaScript-fel och
 bara läsanrop till fake-börsen. Nordnet-åtkomst har inte verifierats eller anslutits.
+
+Agentbevakning: separata rapporter och konsensus testas utan order eller förbrukat
+handelsintent. Tester täcker klonade röster, oenighet, karantän, riskpaus, gamla
+staplar, köp-/villkorad säljsignal, samma signal på nästa stapel, deduplicering vid
+omstart och integration med publik observe. Kontoanslutning eller pengar krävs
+inte för dessa bedömningar.
+
+Chromium-testet `tests/browser_advisory.py` passerade med helt simulerade börsdata:
+fem agentrapporter, konsensus, opt-in skrivbordsnotis via teststub, ingen dubblering
+vid polling, kvarvarande historik utan notisreplay efter omladdning, utgången
+bedömning, mobil layout och inga order eller JavaScript-fel. Desktop-layouten
+granskades visuellt. Inga riktiga skrivbordsnotiser eller privata börsanrop skickades.

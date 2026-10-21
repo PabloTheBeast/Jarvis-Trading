@@ -11,6 +11,7 @@ from .orders import OrderManager
 from .broker import PaperBroker
 from .accounting import Ledger
 from .analysis import correlation as candle_correlation
+from .advisory import review as review_advisories
 
 INITIAL, FEE = 10000, .0015
 ASSETS = [
@@ -309,6 +310,7 @@ class Engine:
         self.s['marketData']=dict(metadata,status='ok',at=self.now.isoformat(),source='Kraken EUR / ECB SEK',error=None)
         self.s['marketAnalysis']=metadata.get('analysis',{})
         self.global_risk()
+        review_advisories(self)
 
     def step(self, prices, now=None, metadata=None):
         s = self.s
@@ -394,6 +396,7 @@ class Engine:
             self.announce('Skuggtest godkänt. Väntar på manuellt godkännande.')
         self.global_risk()
         s['hist'].append(self.equity())
+        review_advisories(self)
         del s['hist'][:-2000]
         self.audit()
 

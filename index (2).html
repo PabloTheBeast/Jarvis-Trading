@@ -41,6 +41,7 @@
         <article class="panel"><h3>Risk just nu</h3><dl class="facts"><div><dt>Investerat</dt><dd id="invested">—</dd></div><div><dt>Exponering</dt><dd id="exposure">—</dd></div><div><dt>Historisk drawdown</dt><dd id="drawdown">—</dd></div><div><dt>Paper-motor</dt><dd id="status">Pausad</dd></div><div><dt>Marknadsdata</dt><dd id="overview-data">Väntar</dd></div></dl><button type="button" data-view="risk">Visa riskkontroller</button><p class="caption">Paus av paper-motorn annullerar inte order som redan skickats till Kraken.</p></article>
       </div>
       <article class="panel"><div class="section-heading"><div><h3>Agenter</h3><p id="agent-summary" class="muted">Inväntar servern</p></div><button id="view-all-agents" type="button">Visa agentdetaljer</button></div><div id="agent-compact" class="agent-grid"></div></article>
+      <article class="panel"><div class="section-heading"><h3>Agenternas kryptobevakning</h3><button type="button" data-view="decisions">Visa agentrapporter &amp; CHEF-meddelanden</button></div><p id="overview-advisory">Inväntar kryptodata. Ingen insättning krävs.</p></article>
     </section>
 
     <section class="tabview" id="tab-market" role="tabpanel" aria-labelledby="nav-market" hidden>
@@ -53,7 +54,10 @@
     </section>
 
     <section class="tabview" id="tab-decisions" role="tabpanel" aria-labelledby="nav-decisions" hidden>
-      <div class="page-heading"><div><p class="eyebrow">SPÅRBARA BESLUT</p><h2>Vad gör agenterna?</h2><p>En observation per avslutad stapel och agent. En signal blir en paper-order först när riskkontrollen tillåter den.</p></div></div>
+      <div class="page-heading"><div><p class="eyebrow">SPÅRBARA BESLUT</p><h2>Vad gör agenterna?</h2><p>Kryptoagenterna rapporterar till CHEF även i bevakningsläge. Bedömningar uppdateras på avslutade femminutersstaplar och lägger inga order.</p></div><button id="enable-alerts" type="button">Aktivera skrivbordsnotiser</button></div>
+      <div id="chef-signals" class="two-columns"></div>
+      <article class="panel"><h3>Agenter som läser kryptokurser</h3><p class="caption">GAMMA: momentum för BTC och ETH. ZETA: återgång mot medelvärdet för BTC och ETH. IOTA: trend för BTC. Övriga agenter följer fortfarande syntetiska aktier/ETF.</p><div class="scroll"><table><thead><tr><th>Agent / par</th><th>Senast läst</th><th>Bedömning</th><th>Underlag och köp-/säljvillkor</th></tr></thead><tbody id="agent-report-rows"></tbody></table></div></article>
+      <article class="panel"><h3>Meddelanden från CHEF</h3><p class="caption">Regelbaserade bevakningssignaler. Ingen vinstgaranti eller individuell investeringsbedömning. Skrivbordsnotiser kräver en öppen sida och webbläsarens tillåtelse; historiken sparas även när sidan är stängd.</p><div id="crypto-notices" class="scroll"></div></article>
       <article class="panel"><div class="scroll"><table><thead><tr><th>Tid</th><th>Agent</th><th>Instrument</th><th>Signal</th><th>Förklaring</th></tr></thead><tbody id="decision-rows"></tbody></table></div></article>
     </section>
 
