@@ -1,34 +1,39 @@
-# Verifiering av JARVIS v0.5.1
+# Verifiering av JARVIS v0.6
 
 Utförd 2026-10-21 i molnmiljön med Python 3.12.14, Node 24.19.0 och systemets Chromium.
 
-- **57 enhets-/API-tester passerade**, inga överhoppade tester.
-- 500-stegstest samt 2 400 steg över åtta simulerade kalenderdygn passerade med
-  exakt kapitalavstämning och unika dagsrapporter. Detta är simulerad tid, inte ett
-  bevis på flera dagars drift eller månaders lagringskapacitet.
-- Hårda subprocesskrascher efter state-skrivning före commit respektive efter commit
-  lämnade antingen den gamla eller den fullständigt nya transaktionen. SQLite:s
-  integritetskontroll passerade och inga halva kommando-/journalposter accepterades.
-- Nekad SQL-journalskrivning återställde även state-skrivningen. SQL-journalens
-  UPDATE/DELETE-skydd verifierades. En backup återställdes med avstämt kapital.
-- Migration från schema 1 skapade en separat verifierad backup; okänd nyare version
-  avvisades utan att låsa ute nästa försök. Faktisk v0.5-databas provades först som
-  kopia och därefter i den ordinarie utvecklingsinstansen: saldo/historik bevarades.
-- Signerade engångsgodkännanden testades för belopp, åtgärd, expiry, fel nyckel,
-  återanvändning, API-retry och attribuerad kapitaljournal.
-- Chromium-smoke passerade för dashboardflikar, insättning, signerat uttag med kod
-  från ägar-CLI:t, kapital-/journalnedladdningar, riskpaus, körning med stängd sida,
-  mobil återanslutning och nödstopp, utan JavaScript-fel.
-- Publika Kraken EUR-tickers och 10 nivåers orderdjup på båda sidor för BTC och ETH
-  samt ECB EUR/SEK hämtades med TLS-verifiering. Datum på ECB-kurs: 2026-10-21.
-- Funktionellt API-steg i den uppgraderade instansen gick från steg 13 till 14 med
-  giltiga Kraken/ECB-data och orderdjup. Motorn lämnades pausad.
-- Affärs-CSV, kapital-CSV och JSONL-journal validerades via HTTP. Lokal hälsokontroll passerade.
-- JavaScript-syntaxkontroll, git diff --check och systemd-analyze verify för
-  deploy/jarvis-paper.service passerade. Systemd-tjänsten installerades inte här.
-- XSTO-reglerna jämfördes med exchange_calendars referenskod. Direkt Nasdaq-webbåtkomst
-  var blockerad; kalenderbegränsningen och behovet av årlig granskning är dokumenterade.
+- **84 enhets-/API-tester passerade**, inga överhoppade tester. Befintliga tester för
+  kapital, risk, migration, backup, hårda subprocesskrascher, 500 steg och åtta
+  simulerade dygn passerar fortsatt. Simulerad tid bevisar inte långvarig drift.
+- Nya regressionstester täcker avslutade OHLC-staplar, luckor/gamla data, oberoende
+  av pollingintervall, tidsjusterad korrelation, kapitalbaslinjer för nya agenter och
+  avvisad syntetisk fallback för riktig kryptodata. Publik analysrefresh handlar inte.
+- HMAC-signering jämfördes med Krakens officiella SDK-referensvärde. Testklienten
+  verifierar att exakt skickad formbody signeras och att timeout inte återförsöks.
+- **Alla privata börssvar är simulerade i testerna.** Tester täcker separat paper-kapital,
+  preview/validate utan order, liveflagga, ägarsignatur, exakta decimalsteg, saldon,
+  exponering, BTC/ETH, köp/sälj utan blankning, kommandodubbletter och stopprace.
+- Timeout efter accepterad simulerad order och krasch före lokal kvittens ger
+  UNKNOWN, även efter omstart; ordern skickas aldrig igen. Avstämning hittar
+  klient-ID, kontrollerar exakta orderparametrar, delavslut, avgifter, trade-ID och
+  annullering. Saknad träff eller avvikande parametrar blockerar nya order.
+- Chromium-smoke passerade för nio flikar, kapital, signerat paper-uttag,
+  exportnedladdningar, riskpaus, körning med stängd sida, återanslutning och mobil.
+  Hela liveflödet preview → validate → CLI-signatur → submit → signerad cancel →
+  reconcile testades med injicerad fake-börs. Inga privata nätverksanrop gjordes.
+- En separat pausad HTTP-instans hämtade riktiga publika Kraken/ECB-data med
+  `refresh-market`: båda paren fick 120 avslutade femminutersstaplar, status ready,
+  slutdatum 2026-10-21 19:45 UTC. Steg förblev 0 och liveflaggan false.
+- Desktop-/mobilvyer granskades visuellt i Chromium. Ingen horisontell sidöverströmning
+  vid 390 pixlar och inga JavaScript-fel vid flikbyte. Ljusstyrka/kontrast har bedömts
+  visuellt; ingen formell tillgänglighetscertifiering har utförts.
+- `node --check dashboard.js` och `git diff --check` passerade.
 
 Inga riktiga order eller uttag skickades. Ingen privat Kraken-nyckel användes.
-Verifiering i en ny publicerad molnuppgift eller i användarens Windows/WSL har inte
-utförts av agenten. Kör kommandona i README för lokal verifiering efter uppdatering.
+Faktiskt saldo, API-behörigheter, credentialed validate=true och finansierad
+orderexekvering återstår att verifiera lokalt enligt [Kraken-guiden](KRAKEN-LIVE.md).
+Ingen autonom livehandel är implementerad. Windows/WSL eller en ny publicerad
+molnuppgift har inte testats från denna maskin.
+
+Tidigare kalender-/driftbegränsningar i [v0.5.1-checklistan](CHECKLIST-v0.5.1.md)
+gäller fortsatt. Skyddade paper-saldon och exporterna där avser simulerade pengar.

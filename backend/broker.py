@@ -15,6 +15,8 @@ class PaperBroker:
         config = self.s.get('paperBroker', {})
         book = self.s['marketData'].get('orderBooks', {}).get(symbol)
         slip = config.get('slippageBps', 5)/10000
+        if symbol in ('BTC-SIM','ETH-SIM') and self.s['marketData'].get('connector')=='kraken-public' and not book:
+            raise ValueError('Verified Kraken crypto cannot fall back to synthetic execution')
         if book:
             base = book['asks' if side == 'BUY' else 'bids'][0][0]
         else:

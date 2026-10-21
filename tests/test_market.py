@@ -2,6 +2,7 @@ import io
 import json
 import unittest
 from datetime import date, timedelta
+import time
 
 from backend.market import Kraken, MarketError
 
@@ -15,8 +16,19 @@ class MarketTests(unittest.TestCase):
             self.assertTrue(url.startswith('https://'))
             if url == Kraken.fx_url:
                 return io.BytesIO(xml)
+            if '/AssetPairs?' in url:
+                return io.BytesIO(json.dumps(dict(error=[],result={pair:dict(pair_decimals=1,lot_decimals=8,
+                    tick_size='0.1',ordermin='0.00005',costmin='0.5',status='online') for pair in ('XXBTZEUR','XETHZEUR')})).encode())
+            if '/OHLC?' in url:
+                pair='XXBTZEUR' if 'XBTEUR' in url else 'XETHZEUR'
+                value=60000 if 'XBTEUR' in url else 2500
+                start=int(time.time()//300)*300-70*300
+                rows=[[start+i*300,str(value),str(value+1),str(value-1),str(value),str(value),'1',1] for i in range(70)]
+                return io.BytesIO(json.dumps(dict(error=[],result={pair:rows,'last':start+70*300})).encode())
             if '/Depth?' in url:
-                return io.BytesIO(json.dumps(dict(error=[], result={'PAIR':dict(bids=[['100','2','1']], asks=[['101','2','1']])})).encode())
+                pair='XXBTZEUR' if 'XBTEUR' in url else 'XETHZEUR'
+                value=60000 if 'XBTEUR' in url else 2500
+                return io.BytesIO(json.dumps(dict(error=[],result={pair:dict(bids=[[str(value-1),'2','1']],asks=[[str(value+1),'2','1']])})).encode())
             return io.BytesIO(json.dumps(payload if payload is not None else dict(error=[], result={
                 'XXBTZEUR':dict(c=['60000','1']), 'XETHZEUR':dict(c=['2500','1'])})).encode())
         return open_url

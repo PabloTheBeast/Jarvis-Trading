@@ -71,10 +71,13 @@ class ServerTests(unittest.TestCase):
 
     def test_failed_command_rolls_back_every_field(self):
         before = self.store.snapshot()
+        before.pop('serverTime')  # Response clock is intentionally not persisted state.
         self.assertEqual(self.command('settings', dict(autoPace=30000, marketAuto='bad'))[0], 400)
-        self.assertEqual(self.store.snapshot(), before)
+        actual=self.store.snapshot();actual.pop('serverTime')
+        self.assertEqual(actual,before)
         self.assertEqual(self.command('withdraw', dict(amount=20000))[0], 400)
-        self.assertEqual(self.store.snapshot(), before)
+        actual=self.store.snapshot();actual.pop('serverTime')
+        self.assertEqual(actual,before)
 
     def test_concurrent_deposits_serialized(self):
         threads = [threading.Thread(target=lambda n=i: self.runtime.command('deposit', dict(amount=10), str(n))) for i in range(12)]

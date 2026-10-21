@@ -1,124 +1,395 @@
 'use strict';
-let state, agents=[], assets=[];
-const initial=10000, MAX_AGENTS=30;
-const fmt=n=>new Intl.NumberFormat('sv-SE',{style:'currency',currency:'SEK',maximumFractionDigits:2}).format(n),pct=n=>(n>=0?'+':'')+(n*100).toFixed(2)+' %';
-const last=id=>state.prices[id]?.at(-1)||0;
-const val=id=>(state.positions[id]?.qty||0)*last(id);
-const invested=()=>assets.reduce((n,a)=>n+val(a.id),0);
-const equity=()=>state.cash+invested();
-const totalEquity=()=>equity()+state.vault;
-const agentValue=id=>assets.reduce((n,a)=>n+(state.positions[a.id]?.owners[id]||0)*last(a.id),0);
-const adjustBudgets=()=>{}; // Budgets are authoritative server values.
-const expansionNext=value=>[15000,25000,50000,100000,200000].find(v=>v>value)||null;
-const activeDuration=()=>state.activeMs;
-function orderAccountingCheck(){const ds=Object.values(state.positions).map(p=>Math.abs(Object.values(p.owners).reduce((n,q)=>n+q,0)-p.qty));return {ok:state.cash>=-1e-6&&ds.every(d=>d<1e-6),ownerDifference:ds.reduce((n,d)=>n+d,0),total:totalEquity()};}
 
-function duration(ms){const t=Math.floor(ms/1000);return [Math.floor(t/3600),Math.floor(t%3600/60),t%60].map(x=>String(x).padStart(2,'0')).join(':')}
-
-function renderDayInfo(){
- document.querySelector('#active-time').textContent=duration(activeDuration());
- document.querySelector('#day-index').textContent=state.day;
- document.querySelector('#days-closed').textContent=state.dayReports.length;
- document.querySelector('#day-steps').textContent=state.tick-state.dayStartTick;
- document.querySelector('#day-status').textContent=state.dayClosed?'Avslutad – starta nästa dag':'Pågående (simulerad)';
- document.querySelector('#day-history').textContent=state.dayReports.length?'Senaste avslutade dagar: '+state.dayReports.slice(0,7).map(r=>'Dag '+r.day+' ('+r.date+')').join(' · '):'Inga avslutade handelsdagar ännu.';
- const r=state.dayReports[0];
- document.querySelector('#day-report').innerHTML=r?`<b>Handelsdag ${r.day} avslutad · ${r.date}</b><br>Realiserat netto under dagen: <b>${fmt(r.dayNet)}</b> · Vinst berättigad till avsättning efter tidigare förluster: <b>${fmt(r.eligible)}</b><br><span class="positive"><b>Överfört till låst sparkonto: ${fmt(r.swept)}</b></span> · ${r.swept>0?'Veckoöverföring':'Ingen överföring vid detta dagsavslut; nästa ordinarie avsättning efter '+r.daysToSweep+' dagar'}<br>Tradingkonto vid avslut: <b>${fmt(r.trading)}</b> (kontanter ${fmt(r.cash)} + öppna innehav ${fmt(r.invested)})<br>Låst sparkonto vid avslut: <b>${fmt(r.vault)}</b> · Totalt: <b>${fmt(r.total)}</b><br>Öppna instrument: ${r.openPositions}. Inga positioner tvångssäljs enbart vid dagsavslut.`:'Avsluta en handelsdag för att se hur mycket som flyttas till sparkontot och hur mycket som är kvar för handel.';
- document.querySelector('#day-report-history').innerHTML=state.dayReports.map(r=>`<tr><td>${r.day}</td><td>${r.date}</td><td>${fmt(r.dayNet)}</td><td class="positive">${fmt(r.swept)}</td><td>${fmt(r.trading)}</td><td>${fmt(r.vault)}</td></tr>`).join('')||'<tr><td colspan="6">Inga dagsrapporter ännu</td></tr>';
- document.querySelector('#endday').disabled=state.dayClosed;
- document.querySelector('#endday').textContent=state.dayClosed?'Handelsdag avslutad':'Avsluta handelsdag';
- document.querySelector('#run').textContent=state.dayClosed?'▶ Starta nästa handelsdag':'▶ Starta auto';
+const $ = id => document.getElementById(id);
+const app = {state:null, agents:[], assets:[], revision:-1, connected:false,
+  received:0, serverTime:0, tab:'overview', pending:0, polling:false, exchange:null, ticket:null, notices:null};
+const tabs = ['overview','market','decisions','agents','portfolio','risk','history','system','exchange'];
+const sek = new Intl.NumberFormat('sv-SE',{style:'currency',currency:'SEK',maximumFractionDigits:2});
+const eur = new Intl.NumberFormat('sv-SE',{style:'currency',currency:'EUR',maximumFractionDigits:2});
+const numbers = new Intl.NumberFormat('sv-SE',{maximumFractionDigits:8});
+const finite = value => Number.isFinite(Number(value)) && value !== null && value !== '';
+const money = value => finite(value) ? sek.format(Number(value)) : '—';
+const euro = value => finite(value) ? eur.format(Number(value)) : '—';
+const quantity = value => finite(value) ? numbers.format(Number(value)) : '—';
+const percent = value => finite(value) ? (Number(value)*100).toFixed(2).replace('.',',')+' %' : '—';
+const ratio = (value,total) => total>0 ? value/total : 0;
+const localTime = value => {
+  const date=new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString('sv-SE',{timeZone:'Europe/Stockholm',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+};
+function node(tag,props={},children=[]){
+  const item=document.createElement(tag);
+  for(const [key,value] of Object.entries(props)){
+    if(key==='class')item.className=value;
+    else if(key==='text')item.textContent=String(value ?? '—');
+    else if(key==='click')item.addEventListener('click',value);
+    else item.setAttribute(key,String(value));
+  }
+  for(const child of children)if(child!==null)item.append(child instanceof Node?child:document.createTextNode(String(child)));
+  return item;
 }
-
-function chart(){const svg=document.querySelector('#chart'),h=state.hist.slice(-130),lo=Math.min(...h)*.995,hi=Math.max(...h)*1.005,span=Math.max(hi-lo,1);let coords=h.map((v,i)=>`${(i/(Math.max(1,h.length-1))*760+10).toFixed(1)},${(235-(v-lo)/span*208).toFixed(1)}`).join(' ');let lines=[0,.25,.5,.75,1].map(t=>`<line x1="10" y1="${27+t*208}" x2="770" y2="${27+t*208}" stroke="#26374b" stroke-dasharray="4 6"/>`).join('');svg.innerHTML=`${lines}<polyline points="${coords}" fill="none" stroke="#5dd9ec" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><text x="14" y="18" fill="#9fb0c4" font-size="12">${fmt(hi)}</text><text x="14" y="253" fill="#9fb0c4" font-size="12">${fmt(lo)}</text>`}
-function renderOrderAudit(){const audit=orderAccountingCheck(),el=document.querySelector('#order-audit');if(!el)return;el.textContent=(audit.ok?'✓ Avstämning OK':'⚠ Avstämningsfel')+' · Totalvärde '+fmt(audit.total)+' · Innehavsdifferens '+audit.ownerDifference.toFixed(9)+' · '+state.orders.length+' registrerade order';document.querySelector('#order-status-rows').innerHTML=state.orders.slice(0,100).map(o=>`<tr><td>${o.orderId}</td><td>${o.agentId} / ${o.instrument}</td><td>${o.side}</td><td>${o.status}</td><td>${o.filledQty.toFixed(5)} / ${o.requestedQty.toFixed(5)}</td><td>${fmt(o.feeTotal)}</td></tr>`).join('')||'<tr><td colspan="6">Inga order ännu</td></tr>';}
-function render(){renderOrderAudit();const orders=state.orderHistory||[];const buys=orders.filter(x=>x.side==='KÖP').length,sells=orders.filter(x=>x.side==='SÄLJ').length;document.querySelector('#buy-count').textContent=buys;document.querySelector('#sell-count').textContent=sells;document.querySelector('#today-orders').textContent=orders.filter(x=>x.day===state.day).length;document.querySelector('#order-rate').textContent=(orders.length/Math.max(1,state.tick)).toFixed(2);document.querySelector('#pace-info').textContent='Simulerat steg var '+((state.marketAuto?(state.autoPace||5000):+document.querySelector('#speed').value)/1000).toLocaleString('sv-SE')+' sekund(er) när körning pågår. Fler steg ger fler möjliga signaler, men garanterar inte fler order.';adjustBudgets();renderCompactAgents();renderNotices();renderCapital();renderDayInfo();renderAgentDetail();renderLedger();let eq=equity(),inv=invested(),pl=(totalEquity()-state.ownerNetDeposits)/Math.max(1,state.ownerNetDeposits);document.querySelector('#equity').textContent=fmt(eq);document.querySelector('#pnl').textContent=pct(pl)+' resultat exkl. ägarinsättningar';document.querySelector('#pnl').className=pl>=0?'positive':'negative';document.querySelector('#cash').textContent=fmt(state.cash);document.querySelector('#vault').textContent=fmt(state.vault);document.querySelector('#total').textContent=fmt(totalEquity());document.querySelector('#vaultdetails').innerHTML='<b>Handelsdag '+state.day+'</b> · Tradingkonto: '+fmt(equity())+' · Skyddat vinstkonto: '+fmt(state.vault)+' · Totalt: '+fmt(totalEquity())+'<br>Realiserat netto totalt: '+fmt(state.realizedTotal)+' · Vinst över tidigare realiserad topp: '+fmt(Math.max(0,state.realizedTotal-state.realizedHighWater))+'<br>'+(state.dayReports[0]?'Senaste dagsavslut: '+fmt(state.dayReports[0].swept)+' överfört vid steg '+state.dayReports[0].tick:'Inget dagsavslut genomfört ännu.');document.querySelector('#invested').textContent=fmt(inv);document.querySelector('#exposure').textContent=(inv/eq*100).toFixed(1)+' % av portföljen';document.querySelector('#drawdown').textContent=(state.maxdd*100).toFixed(2)+' %';document.querySelector('#tick').textContent='Steg '+state.tick;document.querySelector('#clock').textContent='Simulerat steg '+state.tick;document.querySelector('#risk').innerHTML=`<div class="row"><span>Exponering</span><b>${(inv/eq*100).toFixed(1)} % / 70 %</b></div><div class="bars"><i style="width:${Math.min(100,inv/eq/0.7*100)}%"></i></div><p class="muted">Nya köp: <b class="${state.halt?'negative':'positive'}">${state.halt?'BLOCKERADE':'TILLÅTNA'}</b></p><p class="muted">Belåning: av • Blankning: av</p><p class="muted">Risknivå: balanserad</p><p class="muted">Agenter i karantän: ${agents.filter(a=>state.agentStatus[a.id]==='KARANTÄN').length} / ${agents.length}</p><p class="muted">Delade avslutade affärer: ${state.memory.length}</p><p class="muted">Inlärda marknadsmönster: ${Object.keys(state.lessons).length}</p><p class="muted">Globalt stopp: ${state.approvalPending?'INVÄNTAR GODKÄNNANDE':state.halt?'ANALYSPAUS – INGA NYA KÖP':'NORMALT'}</p>`;const gp=state.globalPause;document.querySelector('#approve').disabled=!state.approvalPending;document.querySelector('#recovery').innerHTML=!gp?'Normal drift – inga globala stopp.':`<b>${state.approvalPending?'ÅTERSTART VÄNTAR PÅ DITT GODKÄNNANDE':'GLOBAL PAUS · SKUGGHANDEL'}</b><br>Orsak: ${gp.reason}<br>Steg sedan paus: ${state.tick-gp.start} · Avslutade skuggaffärer: ${gp.trades} · Träffsäkerhet: ${gp.trades?(gp.wins/gp.trades*100).toFixed(0)+' %':'—'} · Resultat: ${fmt(gp.pnl)} · Skuggdrawdown: ${fmt(gp.maxDD)}<br>${state.approvalPending?'Chefens test godkänt – inväntar ditt beslut.':'Nästa granskning steg '+gp.next+'. Kräver minst 5 affärer, positivt netto, minst 50 % träffsäkerhet, max 100 kr skuggdrawdown och aktuell portföljdrawdown under 10 %.'}`;document.querySelector('#agents').innerHTML=agents.map(a=>{let v=agentValue(a);return `<div class="agent"><div class="row"><b>◈ ${a.name}</b><span class="tag">${state.agentStatus[a.id]==='KARANTÄN'?'⏳ KARANTÄN':a.strategy}</span></div><div class="desc">${a.desc}</div><div class="line"><span class="muted">Max kapital</span><b>${fmt(a.budget)}</b></div><div class="line"><span class="muted">Öppna positioner</span><b>${fmt(v)}</b></div><div class="desc">Innehav: ${assets.filter(x=>(state.positions[x.id]?.owners[a.id]||0)>0).map(x=>x.id+' '+fmt((state.positions[x.id].owners[a.id])*last(x.id))).join(' · ')||'Inga'}</div><div class="line"><span class="muted">Realiserat P/L*</span><b class="${state.agentRealized[a.id]>=0?'positive':'negative'}">${fmt(state.agentRealized[a.id])}</b></div><div class="line"><span class="muted">Förlustvarningar</span><b>${state.agentLosses[a.id]} / 3</b></div><div class="line"><span class="muted">Avslut / träffsäkerhet</span><b>${state.agentTrades[a.id]} / ${state.agentTrades[a.id]?(100*state.agentWins[a.id]/state.agentTrades[a.id]).toFixed(0):"—"}%</b></div><div class="line"><span class="muted">Profit factor / max DD</span><b>${state.agentGrossLoss[a.id]?(state.agentGrossProfit[a.id]/state.agentGrossLoss[a.id]).toFixed(2):"—"} / ${(100*state.agentMaxDD[a.id]).toFixed(1)}%</b></div>${state.quarantine[a.id]?`<div class="desc">Skugga: ${state.quarantine[a.id].trades} affärer, ${fmt(state.quarantine[a.id].pnl)} · granskning steg ${state.quarantine[a.id].until}</div>`:""}<div class="bars"><i style="width:${Math.min(100,v/a.budget*100)}%"></i></div></div>`}).join('');document.querySelector('#memory').innerHTML='<div class="note">Alla agenter använder samma statistik per marknad, strategi och marknadsläge. Förluster minskar normalt positionsstorleken; samma riktning är fortfarande tillåten. Lärandet är en enkel adaptiv regel, inte tränad AI.</div>'+Object.entries(state.lessons).sort((a,b)=>b[1].count-a[1].count).slice(0,15).map(([k,v])=>`<div style="padding:9px 0;border-bottom:1px solid var(--stroke)"><b>${k}</b><div class="muted">${v.count} affärer · ${v.wins} vinster · Netto ${fmt(v.total)} · Träffsäkerhet ${(v.wins/v.count*100).toFixed(0)} %</div></div>`).join('')+state.memory.slice(0,12).map(m=>`<div style="padding:7px 0;border-bottom:1px solid var(--stroke)"><span class="${m.pnl>=0?'positive':'negative'}">${m.agent} · ${m.id} · ${fmt(m.pnl)}</span> <span class="muted">steg ${m.tick} · ${m.mode} · ${m.strategy}</span></div>`).join('');document.querySelector('#oversight').innerHTML='<div class="note">Karantän: minst 40 steg, därefter granskning var 20:e steg. Krav: minst 3 stängda skuggaffärer, positivt netto efter avgifter, minst 50 % vinster och högst 40 kr skugg-drawdown. Misslyckad granskning förlänger karantänen. Skuggresultat påverkar inte huvudkontot eller det gemensamma minnet.</div><p class="muted">Korrelationsgräns: max 40 % av portföljvärdet i ett instrument och andra instrument med historisk korrelation över 0,75 (senaste 30 steg). Kräver minst 12 prisförändringar.</p>'+agents.filter(a=>state.quarantine[a.id]).map(a=>{let q=state.quarantine[a.id];return `<div class="row" style="padding:8px;border-bottom:1px solid var(--stroke)"><b>${a.name}</b><span>${q.trades} skuggaffärer · ${fmt(q.pnl)} · nästa kontroll steg ${q.until}</span></div>`}).join('');document.querySelector('#positions').innerHTML=assets.filter(a=>state.positions[a.id]).map(a=>{let p=state.positions[a.id],gain=val(a.id)-p.cost;return `<tr><td>${a.id}</td><td>${a.type}</td><td>${p.qty.toFixed(4)}</td><td>${fmt(val(a.id))}</td><td class="${gain>=0?'positive':'negative'}">${fmt(gain)}</td></tr>`}).join('')||'<tr><td colspan="5" class="muted">Inga positioner ännu</td></tr>';document.querySelector('#prices').innerHTML=assets.map(a=>`<tr><td>${a.id}</td><td>${fmt(last(a.id))}</td><td class="${state.returns[a.id]>=0?'positive':'negative'}">${pct(state.returns[a.id])}</td></tr>`).join('');document.querySelector('#log').innerHTML=state.logs.slice(0,80).map(x=>`<div><span class="muted">#${x.tick} · ${x.agent}</span> — ${x.msg}</div>`).join('');chart()}
-
-
-function renderCapital(){const $=id=>document.getElementById(id);if(!$('agent-count'))return;$('agent-count').textContent=agents.length+' / '+MAX_AGENTS;$('agent-next').textContent=agents.length>=MAX_AGENTS?'Tak nått':(expansionNext(equity())===null?'Maxnivå':fmt(expansionNext(equity())));$('owner-capital').textContent=fmt(state.ownerNetDeposits);$('investment-result').textContent=fmt(totalEquity()-state.ownerNetDeposits);$('owner-ledger').innerHTML='<h3>Ägartransaktioner</h3><table><thead><tr><th>Dag</th><th>Typ</th><th>Belopp</th></tr></thead><tbody>'+state.ownerMovements.slice(0,40).map(x=>'<tr><td>'+x.day+'</td><td>'+x.type+'</td><td>'+fmt(x.amount)+'</td></tr>').join('')+'</tbody></table>'}
-function renderAgentDetail(){const select=document.querySelector('#agent-select');if(!select)return;if(select.options.length!==agents.length){const old=select.value;select.innerHTML=agents.map(a=>`<option value="${a.id}">${a.name}</option>`).join('');if(agents.some(a=>a.id===old))select.value=old;}const a=agents.find(a=>a.id===select.value)||agents[0];const positions=assets.filter(x=>(state.positions[x.id]?.owners[a.id]||0)>0);const history=(state.orderHistory||[]).filter(x=>x.agent===a.id).slice(0,40);document.querySelector('#agent-detail').innerHTML=`<div class="detailgrid"><div class="mini">Strategi<br><b>${a.strategy}</b></div><div class="mini">Tilldelad positionsbudget<br><b>${fmt(a.budget)}</b></div><div class="mini">Aktuellt innehav<br><b>${fmt(agentValue(a.id))}</b></div><div class="mini">Realiserat resultat<br><b>${fmt(state.agentRealized[a.id])}</b></div><div class="mini">Status<br><b>${state.agentStatus[a.id]}</b></div><div class="mini">Avslutade affärer<br><b>${state.agentTrades[a.id]}</b></div></div><h3>Innehav</h3><table><thead><tr><th>Instrument</th><th>Antal</th><th>Marknadsvärde</th><th>Orealiserat P/L</th></tr></thead><tbody>${positions.map(x=>{const qty=state.positions[x.id].owners[a.id],cost=state.ownerCost[a.id][x.id]||0;return `<tr><td>${x.id}</td><td>${qty.toFixed(5)}</td><td>${fmt(qty*last(x.id))}</td><td>${fmt(qty*last(x.id)-cost)}</td></tr>`}).join('')||'<tr><td colspan="4">Inga öppna positioner</td></tr>'}</tbody></table><h3>Senaste order</h3><table><thead><tr><th>Dag/steg</th><th>Instrument</th><th>Order</th><th>Belopp</th><th>Avgift</th><th>Resultat</th></tr></thead><tbody>${history.map(x=>`<tr><td>${x.day} / ${x.tick}</td><td>${x.id}</td><td>${x.side}</td><td>${fmt(x.amount)}</td><td>${fmt(x.fee)}</td><td>${x.pnl===null?'—':fmt(x.pnl)}</td></tr>`).join('')||'<tr><td colspan="6">Ingen orderhistorik ännu</td></tr>'}</tbody></table>`}
-function renderLedger(){const el=document.querySelector('#ledger');if(!el)return;el.innerHTML=`<div class="detailgrid"><div class="mini">Tradingportfölj<br><b>${fmt(equity())}</b></div><div class="mini">Kontanter tillgängliga<br><b>${fmt(state.cash)}</b></div><div class="mini">Låst sparkonto<br><b>${fmt(state.vault)}</b></div><div class="mini">Dagar till veckofördelning<br><b>${7-state.daysSinceSweep}</b></div></div><h3>Vinstöverföringar</h3><table><thead><tr><th>Dag</th><th>Typ</th><th>Belopp</th></tr></thead><tbody>${state.vaultMovements.map(x=>`<tr><td>${x.day??'—'} / ${x.tick}</td><td>${x.type}</td><td>${fmt(x.amount)}</td></tr>`).join('')||'<tr><td colspan="3">Inga överföringar</td></tr>'}</tbody></table><p class="muted">Nästa ordinarie avsättning sker vid sjunde kalenderdagen; manuella extraöverföringar flyttar inte ordinarie datum. Endast realiserad nettovinst över tidigare realiserad topp och tillgängliga kontanter används.</p>`}
-
-
-let currentTab='overview';
-function setTab(name){if(!state)return;if(!['overview','agents','portfolio','risk','history'].includes(name))return;currentTab=name;document.querySelectorAll('.tabview').forEach(el=>el.hidden=el.id!=='tab-'+name);document.querySelectorAll('[data-tab]').forEach(b=>{b.classList.toggle('active',b.dataset.tab===name);b.setAttribute('aria-selected',String(b.dataset.tab===name))});if(name==='history')markNoticesRead();if(name==='agents')renderAgentDetail();}
-function showToast(message){const root=document.querySelector('#toast-stack');if(!root)return;const toast=document.createElement('div');toast.className='toast';const btn=document.createElement('button');btn.textContent='×';btn.onclick=()=>toast.remove();const b=document.createElement('b');b.textContent='🔔 JARVIS CHEF';const p=document.createElement('p');p.textContent=message;toast.append(btn,b,p);root.prepend(toast);while(root.children.length>3)root.lastElementChild.remove();}
-function markNoticesRead(){if(state?.notifications.some(n=>!n.read))command('read-notices');}
-function renderNotices(){const ns=state.notifications||[],unread=ns.filter(n=>!n.read).length;const badge=document.querySelector('#nav-alert-count');badge.textContent=unread;badge.hidden=!unread;const list=document.querySelector('#notice-list');list.innerHTML='';if(!ns.length){list.textContent='Inga meddelanden ännu.';return;}for(const n of ns.slice(0,100)){const d=document.createElement('div');d.className='notice-item';const title=document.createElement('b');title.textContent='Dag '+(n.day||'?')+' · steg '+n.tick+' · '+(n.date||'');const desc=document.createElement('div');desc.textContent=n.msg;d.append(title,desc);list.append(d)}}
-function compactAgentHTML(a){const status=state.agentStatus[a.id]||'AKTIV',recent=(state.orderHistory||[]).find(t=>t.agent===a.id),value=agentValue(a.id),pnl=state.agentRealized[a.id]||0;return `<button type="button" class="agent-chip ${document.querySelector('#agent-select')?.value===a.id?'selected':''}" data-agent-id="${a.id}"><div class="top"><b>${a.name}</b><span class="dot ${status==='KARANTÄN'?'wait':status==='AKTIV'?'':'halt'}" title="${status}"></span></div><div class="strategy">${a.strategy} · ${status}</div><div class="minirow"><span>Realiserat</span><strong class="${pnl>=0?'positive':'negative'}">${fmt(pnl)}</strong></div><div class="minirow"><span>Innehav</span><strong>${fmt(value)}</strong></div><div class="minirow"><span>Senaste trade</span><strong>${recent?recent.side+' '+recent.id:'—'}</strong></div></button>`;}
-function renderCompactAgents(){const html=agents.map(compactAgentHTML).join('');document.querySelector('#agent-compact').innerHTML=html;document.querySelector('#agent-compact-all').innerHTML=html;document.querySelector('#nav-agent-count').textContent=agents.length;document.querySelector('#agent-summary').textContent=agents.filter(a=>state.agentStatus[a.id]==='AKTIV').length+' aktiva · '+agents.length+' totalt';document.querySelector('#agents-caption').textContent=agents.length+' agenter · '+agents.filter(a=>state.agentStatus[a.id]==='KARANTÄN').length+' i skuggläge/karantän';}
-
-let seenNotices=null;
-let pending=0, pollInFlight=false, appliedSequence=0, requestSequence=0;
-function applySnapshot(snapshot, sequence){
- if(sequence<appliedSequence)return;
- appliedSequence=sequence;state=snapshot.state;agents=snapshot.agents;assets=snapshot.assets;
- document.querySelector('#market-auto').checked=state.marketAuto;
- document.querySelector('#auto-pace').value=String(state.autoPace);
- render();
- const noticeKeys=new Set(state.notifications.map(n=>n.tick+'|'+n.msg));
- if(seenNotices)for(const notice of [...state.notifications].reverse())if(!seenNotices.has(notice.tick+'|'+notice.msg))showToast(notice.msg);
- seenNotices=noticeKeys;
- document.querySelector('#status').textContent=state.running?'SERVER KÖR':'SERVER PAUSAD';
- document.querySelector('#market-schedule').textContent='Python-backend · '+(state.running?'motorn kör oberoende av webbläsaren':'motorn pausad');
- document.querySelector('#crypto-status').textContent=state.marketData.status==='ok'?'Kraken EUR → SEK · '+state.marketData.at+' · ECB '+(state.marketData.fxDate||'—'):'Kraken: '+(state.marketData.error||'väntar på första hämtning');
- document.querySelector('#stock-status').textContent='Syntetiska aktier/ETF · svensk börstid i autoläge';
- document.querySelector('#chief-status').textContent=state.halt?'GLOBAL RISKPAUS':'Riskkontroll i Python';
- document.querySelector('#crypto-agent-count').textContent=agents.filter(a=>a.ids.every(id=>id.endsWith('-SIM'))).length+' kryptoagenter';
- document.querySelector('#stock-agent-count').textContent=agents.filter(a=>!a.ids.some(id=>id.endsWith('-SIM'))).length+' aktie-/ETF-agenter';
- document.querySelector('#clock').textContent='Serversteg '+state.tick;
- document.querySelector('#step').disabled=state.dayClosed&&!state.canOpenDay;
- document.querySelector('#run').disabled=state.dayClosed&&!state.canOpenDay;
- document.querySelector('#day-status').textContent=state.dayClosed?'Avslutad · nästa start nästa Stockholm-datum':'Pågående';
- document.querySelector('#next-sweep-date').textContent=state.nextSweepDate||'Efter sju avslutade kalenderdagar';
- document.querySelector('#stock-status').textContent='Syntetiska aktier/ETF · Nasdaq Stockholm-kalender 2025–2027';
- document.querySelector('#pace-info').textContent='Kraken pollas högst var 5:e sekund. Aktier och ETF är syntetiska. Alla order är paper trading.';
- document.querySelector('#run').textContent=state.running?'Pausa servermotor':'Starta servermotor';
- document.querySelector('#connection').textContent='Ansluten · servern äger kapital och beslut';
+function svgNode(tag,attrs={}){
+  const item=document.createElementNS('http://www.w3.org/2000/svg',tag);
+  for(const [key,value] of Object.entries(attrs))item.setAttribute(key,String(value));
+  return item;
+}
+function text(id,value){$(id).textContent=String(value ?? '—');}
+function badge(value,tone=''){return node('span',{class:'badge '+tone,text:value});}
+function tone(value){return value>0?'positive':value<0?'negative':'';}
+function statusTone(value){
+  if(['ready','ok','CLOSED','FILLED','VALIDATED','AKTIV'].includes(value))return 'good';
+  if(['UNKNOWN','VALIDATION_UNKNOWN','REJECTED','error','stale','gap'].includes(value))return 'bad';
+  return 'warn';
+}
+function rows(id,values,empty,columns){
+  $(id).replaceChildren(...(values.length?values.map(row=>node('tr',{},row.map(value=>node('td',{},[value ?? '—'])))):
+    [node('tr',{},[node('td',{colspan:columns,class:'empty-row',text:empty})])]));
+}
+function facts(id,values){
+  $(id).replaceChildren(...values.map(([label,value])=>node('div',{},[node('dt',{text:label}),node('dd',{},[value])])));
+}
+function metric(label,value,note=''){
+  return node('article',{class:'stat'},[node('span',{text:label}),node('strong',{text:value}),node('small',{text:note})]);
+}
+function currentPrice(id){return app.state?.prices[id]?.at(-1)||0;}
+function positionValue(id){return (app.state.positions[id]?.qty||0)*currentPrice(id);}
+function invested(){return Object.keys(app.state.positions).reduce((sum,id)=>sum+positionValue(id),0);}
+function equity(){return app.state.cash+invested();}
+function agentValue(id){return Object.entries(app.state.positions).reduce((sum,[symbol,p])=>sum+(p.owners[id]||0)*currentPrice(symbol),0);}
+function elapsed(ms){const sec=Math.max(0,Math.floor(ms/1000));return [Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(n=>String(n).padStart(2,'0')).join(':');}
+function dataAge(){
+  const stamp=app.state?.marketData?.fetchedAt||app.state?.marketData?.at;
+  return stamp ? (app.serverTime-Date.parse(stamp))/1000+(performance.now()-app.received)/1000 : Infinity;
+}
+function dataFresh(){return app.state?.marketData.status==='ok' && dataAge()>=-5 && dataAge()<=30;}
+function setTab(name,focus=false){
+  if(!tabs.includes(name))return;
+  app.tab=name;
+  for(const tab of tabs){
+    $('tab-'+tab).hidden=tab!==name;
+    $('nav-'+tab).setAttribute('aria-selected',String(tab===name));
+    $('nav-'+tab).tabIndex=tab===name?0:-1;
+  }
+  if(focus)$('nav-'+name).focus();
+  if(name==='history' && app.state?.notifications.some(n=>!n.read))command('read-notices');
+  if(name==='exchange')refreshExchange();
+}
+function toast(message){
+  const item=node('div',{class:'toast'},[node('button',{text:'×','aria-label':'Stäng meddelande',click:()=>item.remove()}),node('strong',{text:'JARVIS CHEF'}),node('p',{text:message})]);
+  $('toast-stack').prepend(item);
+  while($('toast-stack').children.length>3)$('toast-stack').lastElementChild.remove();
+}
+function showError(message){
+  $('command-error').hidden=!message;
+  text('command-error',message);
+}
+function apply(snapshot){
+  if(!snapshot.state||!Array.isArray(snapshot.agents)||!snapshot.paperOnly)throw Error('Ogiltigt svar från paper-servern.');
+  app.connected=true;
+  app.received=performance.now();
+  app.serverTime=Date.parse(snapshot.serverTime)||Date.now();
+  const revision=snapshot.state.revision||0;
+  if(revision<app.revision)return;
+  app.revision=revision;app.state=snapshot.state;app.agents=snapshot.agents;app.assets=snapshot.assets;
+  const notices=new Set(app.state.notifications.map(n=>n.tick+'|'+n.msg));
+  if(app.notices)for(const entry of [...app.state.notifications].reverse())if(!app.notices.has(entry.tick+'|'+entry.msg))toast(entry.msg);
+  app.notices=notices;
+  render();
+}
+async function getJSON(path){
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
+  try{
+    const response=await fetch(path,{signal:controller.signal,cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok)throw Error(data.error||'Servern svarade '+response.status);
+    return data;
+  }finally{clearTimeout(timeout);}
+}
+async function post(path,data={},approval=null){
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),60000);
+  const headers={'Content-Type':'application/json','X-Jarvis-Client':'dashboard','Idempotency-Key':crypto.randomUUID()};
+  if(approval)headers['X-Jarvis-Approval']=approval.trim();
+  try{
+    const response=await fetch(path,{method:'POST',headers,body:JSON.stringify(data),signal:controller.signal});
+    const body=await response.json();
+    if(!response.ok)throw Error(body.error||'Kommandot misslyckades.');
+    return body;
+  }catch(error){
+    if(error.name==='AbortError')throw Error('Svaret dröjer. Kontrollera status innan du försöker igen; en liveorder kan redan ha skickats.');
+    throw error;
+  }finally{clearTimeout(timeout);}
 }
 async function poll(){
- if(pollInFlight||pending)return;
- pollInFlight=true;const seq=++requestSequence;
- try{const response=await fetch('/api/state');if(!response.ok)throw Error('HTTP '+response.status);const snapshot=await response.json();if(!pending)applySnapshot(snapshot,seq);}
- catch(error){document.querySelector('#connection').textContent='Backend frånkopplad · visade data kan vara gamla';}
- finally{pollInFlight=false;}
+  if(app.polling||app.pending)return;
+  app.polling=true;
+  try{apply(await getJSON('/api/state'));}
+  catch(error){app.connected=false;renderHealth();}
+  finally{app.polling=false;if(app.tab==='exchange')refreshExchange();}
 }
 async function command(name,data={}){
- let approval=null;
- if(name==='approve'||name==='release'){
-  const instruction=name==='release'?'python3 -m backend.ops approve release --amount '+data.amount:'python3 -m backend.ops approve resume';
-  approval=prompt('Skapa en engångskod i Ubuntu-terminalen med:\n'+instruction+'\nKlistra sedan in koden här (giltig 120 sekunder).');
-  if(!approval)return;
- }
- if(pending&&name!=='stop')return;
- pending++;const seq=++requestSequence;
- const headers={'Content-Type':'application/json','X-Jarvis-Client':'dashboard','Idempotency-Key':crypto.randomUUID()};
- if(approval)headers['X-Jarvis-Approval']=approval;
- try{const response=await fetch('/api/commands/'+name,{method:'POST',headers,body:JSON.stringify(data)});const snapshot=await response.json();if(!response.ok)throw Error(snapshot.error||'HTTP '+response.status);applySnapshot(snapshot,seq);}
- catch(error){document.querySelector('#connection').textContent=error.message;alert(error.message);}
- finally{pending--;}
+  if(app.pending&&name!=='stop')return;
+  let approval=null;
+  if(name==='release'||name==='approve'){
+    const instruction=name==='release'?'python3 -m backend.ops approve release --amount '+data.amount:'python3 -m backend.ops approve resume';
+    approval=prompt('Skapa en engångskod lokalt:\n'+instruction+'\nKlistra in koden här (120 sekunder).');
+    if(!approval)return;
+  }
+  app.pending++;showError('');renderHealth();
+  try{apply(await post('/api/commands/'+name,data,approval));}
+  catch(error){showError(error.message);}
+  finally{app.pending--;renderHealth();}
 }
-for(const b of document.querySelectorAll('[data-tab]'))b.onclick=()=>setTab(b.dataset.tab);
-document.querySelector('#view-all-agents').onclick=()=>setTab('agents');
-document.querySelector('#toggle-full-agents').onclick=()=>{const el=document.querySelector('#agents');el.hidden=!el.hidden;};
-document.querySelector('#mark-notices-read').onclick=markNoticesRead;
-document.addEventListener('click',e=>{const b=e.target.closest('[data-agent-id]');if(!b||!state)return;document.querySelector('#agent-select').value=b.dataset.agentId;setTab('agents');renderAgentDetail();renderCompactAgents();});
-document.querySelector('#agent-select').onchange=()=>state&&renderAgentDetail();
-for(const [button,name] of [['step','step'],['stop','stop'],['testpause','pause'],['approve','approve'],['endday','close-day'],['save-now','save']])document.getElementById(button).onclick=()=>command(name);
-document.querySelector('#run').onclick=()=>command(state?.running?'stop':'start');
-for(const kind of ['deposit','withdraw'])document.getElementById(kind+'-btn').onclick=()=>{const amount=Number(document.getElementById(kind+'-amount').value);if(confirm('Registrera simulerad kapitalrörelse: '+fmt(amount)+'?'))command(kind,{amount});};
-document.querySelector('#weekly').onclick=()=>{if(confirm('Flytta 20 % av berättigad realiserad nettovinst till skyddat konto?'))command('sweep');};
-document.querySelector('#release').onclick=()=>{const raw=prompt('Belopp att återföra från skyddat paper-konto:');if(raw===null)return;const amount=Number(raw.replace(',','.'));if(confirm('Godkänn återföring '+fmt(amount)+'?'))command('release',{amount,approved:true});};
-document.querySelector('#market-auto').onchange=e=>command('settings',{marketAuto:e.target.checked});
-document.querySelector('#auto-pace').onchange=e=>command('settings',{autoPace:Number(e.target.value)});
-for(const id of ['reset','seed','speed','notify']){document.getElementById(id).disabled=true;document.getElementById(id).title='Ej tillgänglig i serverläget v0.5';}
-for(const option of document.querySelectorAll('#auto-pace option'))if(Number(option.value)<5000)option.remove();
-document.querySelector('#export').onclick=()=>{if(!state)return;const quote=v=>'"'+String(v).replaceAll('"','""')+'"';const rows=[['order_id','agent','instrument','side','quantity','price_SEK','fee_SEK','pnl_SEK'],...state.orderHistory.map(o=>[o.orderId,o.agent,o.id,o.side,o.qty,o.price,o.fee,o.pnl??''])];const url=URL.createObjectURL(new Blob(['\ufeff'+rows.map(r=>r.map(quote).join(',')).join('\n')],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='jarvis-paper-orders.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-poll();setInterval(poll,2000);
-
-function downloadExport(path){const a=document.createElement('a');a.href=path;a.download=path.split('/').at(-1);a.click();}
-document.querySelector('#export').onclick=()=>downloadExport('/api/export/trades.csv');
-document.querySelector('#export-capital').onclick=()=>downloadExport('/api/export/capital.csv');
-document.querySelector('#export-journal').onclick=()=>downloadExport('/api/export/journal.jsonl');
-
-document.querySelector('#endday').onclick=()=>{if(confirm('Avsluta dagens bokföring? Handel kan startas igen först nästa Stockholm-datum.'))command('close-day');};
+function renderOverview(){
+  const s=app.state,inv=invested(),total=equity()+s.vault;
+  text('equity',money(equity()));text('cash',money(s.cash));text('vault',money(s.vault));text('total',money(total));
+  text('pnl',money(total-s.ownerNetDeposits)+' utan ägarrörelser');$('pnl').className=tone(total-s.ownerNetDeposits);
+  text('invested',money(inv));text('exposure',percent(ratio(inv,equity()))+' / 70 %');text('drawdown',percent(s.maxdd));
+  text('tick','Steg '+s.tick);text('clock','Serversteg '+s.tick);
+  text('status',s.running?'Kör':'Pausad');text('run',s.running?'Pausa paper':'Starta paper');
+  $('market-auto').checked=s.marketAuto;$('auto-pace').value=String(s.autoPace);
+  const values=s.hist.slice(-130),lo=Math.min(...values)*.995,hi=Math.max(...values)*1.005,span=Math.max(hi-lo,1);
+  const chart=$('chart');chart.replaceChildren();
+  for(let i=0;i<5;i++)chart.append(svgNode('line',{x1:10,x2:770,y1:28+i*47,y2:28+i*47,stroke:'#2c3d54','stroke-dasharray':'4 6'}));
+  chart.append(svgNode('polyline',{points:values.map((v,i)=>(10+760*i/Math.max(1,values.length-1))+','+(224-(v-lo)/span*190)).join(' '),fill:'none',stroke:'#67d1d3','stroke-width':2.5}));
+  if(values.length===1)chart.append(svgNode('circle',{cx:10,cy:224-(values[0]-lo)/span*190,r:4,fill:'#67d1d3'}));
+  for(const [value,y] of [[hi,17],[lo,245]]){const label=svgNode('text',{x:10,y});label.textContent=money(value);chart.append(label);}
+}
+function agentCard(agent){
+  const s=app.state,id=agent.id,selected=$('agent-select').value===id;
+  return node('button',{type:'button',class:'agent-chip'+(selected?' selected':''),'data-agent-id':id,click:()=>{
+    $('agent-select').value=id;setTab('agents');renderAgents();$('agent-detail-panel').scrollIntoView({block:'nearest'});
+  }},[node('div',{class:'agent-top'},[node('strong',{text:agent.name}),badge(s.agentStatus[id]==='AKTIV'?'Aktiv':'Karantän',s.agentStatus[id]==='AKTIV'?'good':'warn')]),
+    node('div',{class:'agent-sub',text:agent.strategy}),node('div',{class:'agent-value '+tone(s.agentRealized[id]),text:money(s.agentRealized[id])}),
+    node('div',{class:'agent-note',text:'Realiserat · innehav '+money(agentValue(id))})]);
+}
+function renderAgents(){
+  const s=app.state,select=$('agent-select'),old=select.value;
+  if(select.options.length!==app.agents.length)select.replaceChildren(...app.agents.map(a=>node('option',{value:a.id,text:a.name})));
+  if(app.agents.some(a=>a.id===old))select.value=old;
+  $('agent-compact').replaceChildren(...app.agents.map(agentCard));$('agent-compact-all').replaceChildren(...app.agents.map(agentCard));
+  text('nav-agent-count',app.agents.length);text('agent-count',app.agents.length+' / 30');
+  text('agent-summary',app.agents.filter(a=>s.agentStatus[a.id]==='AKTIV').length+' aktiva · '+app.agents.length+' totalt');
+  text('agents-caption','Välj en agent. '+app.agents.filter(a=>s.agentStatus[a.id]==='KARANTÄN').length+' agenter i karantän.');
+  const agent=app.agents.find(a=>a.id===select.value)||app.agents[0];if(!agent)return;
+  const summary=node('div',{class:'stats small-stats'},[metric('Strategi',agent.strategy),metric('Budget',money(agent.budget)),metric('Innehav',money(agentValue(agent.id))),metric('Realiserat',money(s.agentRealized[agent.id]))]);
+  const positions=app.assets.filter(a=>(s.positions[a.id]?.owners[agent.id]||0)>0);
+  const positionsTable=node('table',{},[node('thead',{},[node('tr',{},['Instrument','Antal','Marknadsvärde','Resultat'].map(v=>node('th',{text:v})))]),
+    node('tbody',{},positions.length?positions.map(a=>{const qty=s.positions[a.id].owners[agent.id];return node('tr',{},[a.id,quantity(qty),money(qty*currentPrice(a.id)),money(qty*currentPrice(a.id)-(s.ownerCost[agent.id][a.id]||0))].map(v=>node('td',{text:v})));}):
+      [node('tr',{},[node('td',{colspan:4,class:'empty-row',text:'Inga öppna innehav.'})])])]);
+  const trades=s.orderHistory.filter(o=>o.agent===agent.id).slice(0,20);
+  const history=node('div',{},trades.length?trades.map(o=>node('div',{class:'event'},[node('small',{text:o.orderId+' · '+o.id}),node('span',{text:o.side+' '+quantity(o.qty)+' · '+money(o.amount)+' · avgift '+money(o.fee)})])):[node('p',{class:'muted',text:'Inga affärer ännu.'})]);
+  $('agent-detail').replaceChildren(summary,node('h4',{text:'Innehav'}),node('div',{class:'scroll'},[positionsTable]),node('h4',{text:'Senaste paper-affärer'}),history);
+}
+function renderPortfolio(){
+  const s=app.state;
+  rows('positions',app.assets.filter(a=>s.positions[a.id]).map(a=>[a.id,a.type,quantity(s.positions[a.id].qty),money(positionValue(a.id)),money(positionValue(a.id)-s.positions[a.id].cost)]),'Inga positioner ännu.',5);
+  text('owner-capital',money(s.ownerNetDeposits));text('investment-result',money(equity()+s.vault-s.ownerNetDeposits));
+  const next=[15000,25000,50000,100000,200000].find(n=>n>equity());text('agent-next',app.agents.length>=30?'Max antal agenter':next?money(next):'Högsta kapitalnivå');
+  $('owner-ledger').replaceChildren(...s.ownerMovements.slice(0,12).map(v=>node('div',{class:'event'},[node('small',{text:'Dag '+v.day}),node('span',{text:v.type+' · '+money(v.amount)})])));
+  text('vaultdetails','Skyddat paper-saldo '+money(s.vault)+'. Ny realiserad vinst över avsatt topp: '+money(Math.max(0,s.realizedTotal-s.realizedHighWater))+'.');
+  text('next-sweep-date',s.nextSweepDate||'Efter sju kalenderdagar');
+  $('ledger').replaceChildren(...s.vaultMovements.slice(0,20).map(v=>node('div',{class:'event'},[node('small',{text:'Dag '+v.day}),node('span',{text:v.type+' · '+money(v.amount)})])));
+  const report=s.dayReports[0];text('day-report',report?'Senaste rapport: '+report.date+' · realiserat '+money(report.dayNet)+' · vinstskydd '+money(report.swept):'Inga avslutade dagar ännu.');
+  rows('day-report-history',s.dayReports.slice(0,100).map(r=>[r.day,r.date,money(r.dayNet),money(r.swept),money(r.trading),money(r.vault)]),'Inga dagsrapporter.',6);
+  $('endday').disabled=s.dayClosed||app.pending>0;
+}
+function renderRisk(){
+  const s=app.state,q=s.globalPause,inv=invested();
+  text('recovery',q?(s.approvalPending?'Skuggtest godkänt — väntar på ägargodkännande. ':'Riskpaus — nya paper-köp stoppade. ')+q.reason+' · '+q.trades+' skuggavslut · netto '+money(q.pnl)+' · nästa granskning steg '+q.next:'Normal paper-drift. Ingen global riskpaus.');
+  $('recovery').className='notice'+(q?' warn':'');
+  $('approve').disabled=!s.approvalPending||app.pending>0||!app.connected;
+  $('risk').replaceChildren(...[
+    ['Samlad exponering',percent(ratio(inv,equity()))+' / 70 %'],
+    ['Per instrument','Högst 25 %'],['Korrelerad grupp','Högst 40 %'],['Ordertak','Högst 2 000 SEK'],
+    ['Avgift i paper-modellen','0,15 %'],['Köp',s.halt?'Blockerade':'Tillåtna efter orderkontroll'],
+    ['Belåning / blankning','Avstängt']].map(([a,b])=>node('div',{class:'event'},[node('small',{text:a}),node('strong',{text:b})])));
+  const quarantined=app.agents.filter(a=>s.quarantine[a.id]);
+  $('oversight').replaceChildren(node('p',{class:'caption',text:'Minst 40 steg, tre avslut, positivt skuggnetto, minst 50 % vinster och högst 40 SEK skuggdrawdown.'}),
+    ...quarantined.map(a=>{const r=s.quarantine[a.id];return node('div',{class:'event'},[node('strong',{text:a.name}),node('p',{text:r.trades+' avslut · '+money(r.pnl)+' · kontroll steg '+r.until})]);}),
+    ...(quarantined.length?[]:[node('p',{class:'muted',text:'Inga agenter i karantän.'})]));
+  $('memory').replaceChildren(...s.memory.slice(0,30).map(v=>node('div',{class:'event'},[node('small',{text:v.agent+' · '+v.id+' · '+v.strategy}),node('span',{class:tone(v.pnl),text:money(v.pnl)})])));
+}
+function renderHistory(){
+  const s=app.state,orders=s.orderHistory;
+  text('buy-count',orders.filter(o=>o.side==='KÖP').length);text('sell-count',orders.filter(o=>o.side==='SÄLJ').length);
+  text('today-orders',orders.filter(o=>o.day===s.day).length);text('order-rate',(orders.length/Math.max(1,s.tick)).toFixed(2));
+  text('order-audit','Paper-kapital avstämt vid senaste transaktion · '+s.orders.length+' order. Verkligt Kraken-konto ingår inte i denna avstämning.');
+  rows('order-status-rows',s.orders.slice(0,100).map(o=>[node('span',{class:'mono',text:o.orderId}),o.agentId+' / '+o.instrument,o.side,badge(o.status,statusTone(o.status)),quantity(o.filledQty)+' / '+quantity(o.requestedQty),money(o.feeTotal)]),'Inga paper-order ännu.',6);
+  const unread=s.notifications.filter(n=>!n.read).length;text('nav-alert-count',unread);$('nav-alert-count').hidden=!unread;
+  $('notice-list').replaceChildren(...(s.notifications.length?s.notifications.slice(0,50).map(n=>node('div',{class:'event'},[node('small',{text:localTime(n.date)+' · dag '+n.day}),node('span',{text:n.msg})])):[node('p',{class:'muted',text:'Inga meddelanden.'})]));
+  $('log').replaceChildren(...s.logs.slice(0,80).map(l=>node('div',{class:'event'},[node('small',{text:localTime(l.at)+' · '+(l.level||'INFO')+' · '+l.agent}),node('span',{text:l.msg})])));
+}
+function renderMarket(){
+  const s=app.state,symbol=$('market-symbol').value,analysis=s.marketAnalysis?.[symbol],book=s.marketData.orderBooks?.[symbol],rate=s.marketData.eurSek;
+  const name=symbol==='BTC-SIM'?'BTC / EUR':'ETH / EUR';
+  text('market-chart-title',name+' · 5 minuter');
+  text('market-quality',analysis?analysis.reason:'Analys saknas. Uppdatera marknaden eller kör ett paper-steg.');
+  $('market-quality').className='notice'+(!dataFresh()||analysis?.status!=='ready'?' warn':'');
+  $('analysis-indicators').replaceChildren(metric('SMA 20',euro(analysis?.sma20),'20 avslutade staplar'),metric('SMA 50',euro(analysis?.sma50),'50 avslutade staplar'),
+    metric('RSI 14',analysis?.rsi14?.toFixed(1).replace('.',',')||'—','Historiskt momentum'),metric('ATR 14',finite(analysis?.atrPercent)?Number(analysis.atrPercent).toFixed(3).replace('.',',')+' %':'—','Historiskt prisintervall'));
+  facts('market-quotes',[['Köpsida, EUR',book&&rate?euro(book.bids[0][0]/rate):'—'],['Säljsida, EUR',book&&rate?euro(book.asks[0][0]/rate):'—'],
+    ['Spread',book?percent(book.asks[0][0]/book.bids[0][0]-1):'—'],['Kursmarkering, SEK',currentPrice(symbol)?money(currentPrice(symbol)):'—'],
+    ['ECB EUR/SEK',rate?quantity(rate)+' · '+s.marketData.fxDate:'—'],['Data hämtade',localTime(s.marketData.fetchedAt)],['Senast avslutade stapel',localTime(analysis?.closedAt)]]);
+  $('market-signals').replaceChildren(...(analysis?.status==='ready'?Object.entries(analysis.signals).map(([name,value])=>node('div',{class:'event'},[
+    node('strong',{text:name}),badge(value||'Avvakta',value==='BUY'?'good':value==='SELL'?'warn':''),node('p',{class:'caption',text:analysis.reasons[name]})])):
+    [node('p',{class:'muted',text:analysis?.reason||'Ingen verifierad analys ännu.'})]));
+  rows('prices',app.assets.map(a=>[a.id,a.type==='Krypto'?(s.marketData.connector==='kraken-public'?'Kraken, senast hämtad mittkurs':'Startreferens · ej börsdata'):'Syntetisk modell',currentPrice(a.id)?money(currentPrice(a.id)):'—',percent(s.returns[a.id])]),'Inga priser.',4);
+  candleChart(analysis?.candles||[]);
+}
+function candleChart(all){
+  const chart=$('market-chart');chart.replaceChildren();
+  const candles=all.slice(-60);
+  if(!candles.length){const empty=svgNode('text',{x:450,y:145,'text-anchor':'middle'});empty.textContent='Inväntar avslutade Kraken-staplar';chart.append(empty);return;}
+  const min=Math.min(...candles.map(r=>r.low)),max=Math.max(...candles.map(r=>r.high)),span=Math.max(max-min,max*.001);
+  const y=value=>255-(value-min)/span*215,step=800/candles.length;
+  for(let i=0;i<5;i++){
+    const level=min+span*i/4;
+    chart.append(svgNode('line',{x1:65,x2:890,y1:y(level),y2:y(level),stroke:'#2c3d54','stroke-dasharray':'3 5'}));
+    const label=svgNode('text',{x:2,y:y(level)+4});label.textContent=quantity(level);chart.append(label);
+  }
+  candles.forEach((c,i)=>{
+    const x=75+step*i,color=c.close>=c.open?'#8be0b6':'#ff9baa';
+    const wick=svgNode('line',{x1:x,x2:x,y1:y(c.high),y2:y(c.low),stroke:color});
+    const body=svgNode('rect',{x:x-Math.max(2,step*.5)/2,y:Math.min(y(c.open),y(c.close)),width:Math.max(2,step*.5),height:Math.max(1,Math.abs(y(c.open)-y(c.close))),fill:color});
+    const title=svgNode('title');title.textContent=localTime(c.time*1000)+' · O '+c.open+' H '+c.high+' L '+c.low+' C '+c.close+' EUR';body.append(title);chart.append(wick,body);
+  });
+  for(const [c,x] of [[candles[0],65],[candles.at(-1),750]]){const label=svgNode('text',{x,y:285});label.textContent=localTime(c.time*1000).slice(6,11);chart.append(label);}
+}
+function renderDecisions(){
+  rows('decision-rows',(app.state.lastDecisions||[]).slice(0,100).map(d=>[localTime(d.at),d.agent,d.instrument,badge(d.side,d.side==='BUY'?'good':d.side==='SELL'?'warn':''),node('span',{class:'explain',text:d.reason})]),
+    'Ingen ny femminutersstapel har granskats ännu. Uppdatera först marknaden och starta sedan paper-motorn.',5);
+}
+function renderSession(){
+  const s=app.state;
+  text('active-time',elapsed(s.activeMs));text('day-index',s.day);text('days-closed',s.dayReports.length);text('day-steps',s.tick-s.dayStartTick);
+  text('day-status',s.dayClosed?(s.canOpenDay?'Nästa datum kan startas':'Avslutad till nästa Stockholm-datum'):'Pågående');
+  text('day-history',s.dayReports.length?'Senast avslutad: '+s.dayReports[0].date:'Inga avslutade rapportdatum.');
+  text('pace-info','Paper-uppdatering var '+s.autoPace/1000+' sekund. Strategiernas femminutersstaplar är oberoende av detta.');
+}
+function renderHealth(){
+  const transport=app.connected && performance.now()-app.received<12000;
+  const fresh=transport&&dataFresh();
+  text('connection',!transport?'Servern kan inte nås — visade data kan vara gamla.':fresh?'Server ansluten · marknadsdata färska':'Server ansluten · marknadsdata saknas eller är gamla');
+  $('connection').dataset.level=transport?(fresh?'good':'warn'):'bad';
+  text('overview-data',fresh?'Färska':app.state?.marketData.status==='error'?'Hämtning misslyckades':'Väntar / gamla');
+  const blocked=app.state?.dayClosed&&!app.state?.canOpenDay;
+  for(const id of ['step','run','deposit-btn','withdraw-btn','weekly','release','testpause'])$(id).disabled=!transport||app.pending>0||Boolean(blocked&&['step','run'].includes(id));
+  $('approve').disabled=!transport||app.pending>0||!app.state?.approvalPending;
+  const analysis=app.state?.marketAnalysis||{},ready=Object.values(analysis).filter(a=>a.status==='ready').length;
+  const checks=[['Server',transport?'Ansluten':'Frånkopplad',transport?'Lokalt API svarar.':'Kontrollera Python-processen.',transport?'good':'bad'],
+    ['Marknadsdata',fresh?'Färska':'Inte färska',Number.isFinite(dataAge())?'Äldsta orderdjup: '+Math.floor(Math.max(0,dataAge()))+' sekunder.':'Ingen lyckad hämtning.',fresh?'good':'warn'],
+    ['Marknadsanalys',ready+' / 2 par redo','Avslutade femminutersstaplar, SMA, RSI och ATR.',ready===2&&fresh?'good':'warn'],
+    ['Paper-motor',app.state?.running?'Kör':'Pausad',app.state?.runtimeError||'Processomstart lämnar motorn pausad.',app.state?.runtimeError?'bad':''],
+    ['CHEF',app.state?.halt?'Riskpaus':'Ingen global paus','Nya köp kräver alltid orderkontroll.',app.state?.halt?'warn':'good'],
+    ['Syntetiska aktier','Nasdaq Stockholm 2025–2027','Helgdagar och halvdagar. Inte riktiga aktiekurser.','']];
+  $('system-checks').replaceChildren(...checks.map(([label,value,detail,color])=>node('article',{class:'status-card'},[badge(label,color),node('strong',{text:value}),node('p',{text:detail})])));
+}
+function render(){
+  if(!app.state)return;
+  renderOverview();renderAgents();renderPortfolio();renderRisk();renderHistory();renderMarket();renderDecisions();renderSession();renderHealth();
+  if(app.exchange)renderExchange();
+}
+async function refreshExchange(){
+  try{app.exchange=await getJSON('/api/exchange');renderExchange();}
+  catch(error){text('exchange-message','Börsstatus kan inte hämtas: '+error.message);}
+}
+function renderExchange(){
+  const e=app.exchange;if(!e)return;
+  text('live-mode',e.liveEnabled?'Live tillåtet · ägargodkännande krävs':'Live avstängt');
+  $('live-mode').className='badge '+(e.liveEnabled?'warn':'');
+  text('live-cap',e.maximumOrderEUR+' EUR');
+  text('exchange-message',e.error|| (e.connected?'Kraken-kontot kontrollerat '+localTime(e.checkedAt)+'. Saldon i EUR/BTC/ETH är verkliga och separata från paper.':'Inget privat Kraken-konto har kontrollerats. Börja med lokal konfiguration och Kontrollera konto.'));
+  $('exchange-message').className='notice'+(e.error?' error':e.liveEnabled?' warn':'');
+  const balances=e.account?.balances;
+  $('live-balances').replaceChildren(metric('Verkligt EUR-saldo',balances?euro(balances.EUR.balance):'—','Tillgängligt: '+(balances?euro(balances.EUR.available):'—')),
+    metric('Verkligt BTC-saldo',balances?quantity(balances.XBT.balance):'—','Tillgängligt: '+(balances?quantity(balances.XBT.available):'—')),
+    metric('Verkligt ETH-saldo',balances?quantity(balances.ETH.balance):'—','Tillgängligt: '+(balances?quantity(balances.ETH.available):'—')),
+    metric('Öppna Kraken-order',e.account?.openOrderCount??'—','Hämtas bara vid uttrycklig kontokontroll'));
+  if(app.ticket)app.ticket=e.tickets.find(t=>t.id===app.ticket.id)||app.ticket;
+  rows('live-orders',e.tickets.map(t=>[node('span',{class:'mono',text:t.id.slice(0,15)+'…'}),t.pair+' '+t.side,t.volume+' / '+t.price,badge(t.state,statusTone(t.state)),
+    node('span',{class:'mono',text:t.exchangeOrderId||'—'}),node('button',{type:'button',text:'Visa',click:()=>{app.ticket=t;renderTicket();}})]),'Inga livebiljetter.',6);
+  renderTicket();
+}
+function renderTicket(){
+  const t=app.ticket,e=app.exchange;
+  const active=['SENDING','UNKNOWN','ACKNOWLEDGED','OPEN','PARTIAL','CANCEL_REQUESTED','VALIDATION_UNKNOWN'].includes(t?.state);
+  if(t){
+    const values=[['Status',badge(t.state,statusTone(t.state))],['Biljett',node('span',{class:'mono',text:t.id})],
+      ['Order',t.side.toUpperCase()+' '+t.volume+' '+t.pair],['Limitpris',t.price+' EUR'],['Ordervärde',t.risk.notionalEUR+' EUR'],
+      ['Avgiftsreserv',t.risk.feeReserveEUR+' EUR'],['Kraken-order-ID',t.exchangeOrderId||'Inget order-ID ännu']];
+    const dl=node('dl',{class:'facts'});$('live-ticket-details').replaceChildren(dl);
+    for(const [label,value] of values)dl.append(node('div',{},[node('dt',{text:label}),node('dd',{},[value])]));
+    if(t.error)$('live-ticket-details').append(node('p',{class:'negative',text:t.error}));
+    const stale=app.state && t.stopGeneration!==app.state.stopGeneration;
+    text('live-approval-help',stale?'En paus eller omstart har ogiltigförklarat denna biljett för insändning. Skapa en ny.':
+      'Validering skickar ingen order. För insändning: python3 -m backend.ops approve live-order --ticket '+t.id);
+    $('live-submit').disabled=app.pending>0||!e?.liveEnabled||t.state!=='VALIDATED'||stale||Boolean(app.state?.halt&&t.side==='buy');
+  }else{
+    text('live-ticket-details','Förhandsgranska först ett exakt antal och limitpris.');
+    $('live-submit').disabled=true;
+  }
+  $('live-preview').disabled=app.pending>0||!e?.connected;
+  $('live-validate').disabled=app.pending>0||!t||!['PREVIEW','VALIDATED','VALIDATION_FAILED'].includes(t.state);
+  $('live-reconcile').disabled=app.pending>0||!active;
+  $('live-cancel').disabled=app.pending>0||!active||!t?.exchangeOrderId;
+}
+async function exchangeAction(action,data={}){
+  if(app.pending)return;
+  let approval=null;
+  if(action==='submit'||action==='cancel'){
+    const t=app.ticket;if(!t)return;
+    const instruction='python3 -m backend.ops approve '+(action==='submit'?'live-order':'live-cancel')+' --ticket '+t.id;
+    approval=prompt((action==='submit'?'VERKLIG ORDER: ':'ANNULLERA VERKLIG ORDER: ')+t.side.toUpperCase()+' '+t.volume+' '+t.pair+' limit '+t.price+' EUR.\nSkapa koden i en lokal terminal:\n'+instruction+'\nKlistra in engångskoden. API-hemligheter ska aldrig skrivas här.');
+    if(!approval)return;
+  }
+  app.pending++;showError('');renderTicket();
+  try{
+    const result=await post('/api/exchange/'+action,data,approval);
+    if(result.id)app.ticket=result;
+    if(action==='check')app.exchange=result;
+  }catch(error){showError(error.message);}
+  finally{app.pending--;await refreshExchange();renderHealth();}
+}
+for(const tab of tabs)$('nav-'+tab).addEventListener('click',()=>setTab(tab));
+document.querySelector('.tabbar').addEventListener('keydown',event=>{
+  if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+  event.preventDefault();
+  const index=tabs.indexOf(app.tab),next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+  setTab(tabs[next],true);
+});
+document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>setTab(button.dataset.view)));
+$('view-all-agents').addEventListener('click',()=>setTab('agents'));
+$('agent-select').addEventListener('change',renderAgents);
+$('market-symbol').addEventListener('change',renderMarket);
+$('step').onclick=()=>command('step');$('run').onclick=()=>command(app.state?.running?'stop':'start');$('stop').onclick=()=>command('stop');
+$('testpause').onclick=()=>command('pause');$('approve').onclick=()=>command('approve');
+$('endday').onclick=()=>{if(confirm('Avsluta dagens paper-bokföring? Dagen kan öppnas igen först nästa Stockholm-datum.'))command('close-day');};
+for(const kind of ['deposit','withdraw'])$(kind+'-btn').onclick=()=>{
+  const amount=Number($(kind+'-amount').value);
+  if(!Number.isFinite(amount)||amount<=0){showError('Ange ett giltigt positivt belopp.');return;}
+  if(confirm('Registrera simulerad '+(kind==='deposit'?'insättning':'uttag')+' '+money(amount)+'?'))command(kind,{amount});
+};
+$('weekly').onclick=()=>{if(confirm('Skydda 20 % av ny berättigad realiserad paper-vinst?'))command('sweep');};
+$('release').onclick=()=>{
+  const answer=prompt('Belopp i SEK att återföra från det skyddade paper-kontot:');if(answer===null)return;
+  const amount=Number(answer.replace(',','.'));if(!Number.isFinite(amount)||amount<=0){showError('Ogiltigt belopp.');return;}
+  if(confirm('Godkänn återföring '+money(amount)+' till paper-tradingkontot?'))command('release',{amount,approved:true});
+};
+$('market-auto').onchange=event=>command('settings',{marketAuto:event.target.checked});
+$('auto-pace').onchange=event=>command('settings',{autoPace:Number(event.target.value)});
+$('mark-notices-read').onclick=()=>command('read-notices');
+for(const [id,file] of [['export','trades.csv'],['export-capital','capital.csv'],['export-journal','journal.jsonl']])$(id).onclick=()=>{
+  const link=node('a',{href:'/api/export/'+file,download:file});link.click();
+};
+$('refresh-status').onclick=()=>poll();
+$('refresh-market').onclick=()=>command('refresh-market');
+$('exchange-check').onclick=()=>exchangeAction('check');
+$('live-form').addEventListener('submit',event=>{
+  event.preventDefault();
+  const data={pair:$('live-pair').value,side:$('live-side').value,volume:$('live-volume').value.trim().replace(',','.'),price:$('live-price').value.trim().replace(',','.')};
+  exchangeAction('preview',data);
+});
+for(const action of ['validate','submit','reconcile','cancel'])$('live-'+action).onclick=()=>{if(app.ticket)exchangeAction(action,{ticket:app.ticket.id});};
+poll();refreshExchange();
+setInterval(poll,2000);
+setInterval(renderHealth,1000);

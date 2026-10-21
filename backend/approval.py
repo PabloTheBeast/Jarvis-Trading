@@ -36,8 +36,8 @@ def encode(payload):
     return base64.urlsafe_b64encode(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).decode().rstrip('=')
 
 
-def issue(key, action, amount=None, lifetime=120, now=None):
-    if action not in ('release', 'approve'):
+def issue(key, action, amount=None, lifetime=120, now=None, subject=None):
+    if action not in ('release', 'approve', 'live-order', 'live-cancel'):
         raise ApprovalError('Unsupported approval action')
     now = int(time.time() if now is None else now)
     payload = dict(action=action, actor=getpass.getuser(), nonce=secrets.token_hex(16),
@@ -46,12 +46,16 @@ def issue(key, action, amount=None, lifetime=120, now=None):
         if amount is None or units(amount) <= 0:
             raise ApprovalError('A positive release amount is required')
         payload['amountNanoSek'] = units(amount)
+    if action in ('live-order','live-cancel'):
+        if not isinstance(subject,str) or not subject:
+            raise ApprovalError('A ticket fingerprint is required')
+        payload['subject']=subject
     body = encode(payload)
     signature = hmac.new(key, body.encode(), hashlib.sha256).hexdigest()
     return body+'.'+signature
 
 
-def verify(key, token, action, amount=None, now=None):
+def verify(key, token, action, amount=None, now=None, subject=None):
     try:
         body, signature = token.split('.')
         expected = hmac.new(key, body.encode(), hashlib.sha256).hexdigest()
@@ -65,6 +69,8 @@ def verify(key, token, action, amount=None, now=None):
             raise ApprovalError('Invalid approval scope')
         if action == 'release' and payload.get('amountNanoSek') != units(amount):
             raise ApprovalError('Approval amount mismatch')
+        if action in ('live-order','live-cancel') and payload.get('subject')!=subject:
+            raise ApprovalError('Approval ticket mismatch')
         return payload
     except ApprovalError:
         raise

@@ -3,3 +3,5 @@ __pycache__/
 .jarvis/
 .venv/
 *.operator-key
+*.credentials.json
+*.credentials.json.tmp-*

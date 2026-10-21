@@ -22,6 +22,8 @@ from .calendar import clock
 from .approval import operator_key, verify
 from .exporting import trades, capital
 from .logging_config import configure
+from .live import LiveService
+from .kraken_private import ExchangeError, ExchangeUnknown
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,6 +99,7 @@ class Store:
             candidate = copy.deepcopy(self.state)
             engine = Engine(candidate)
             action(engine)
+            candidate['revision']=self.state.get('revision',0)+1
             engine.audit()
             payload = json.dumps(candidate, allow_nan=False, ensure_ascii=False)
             journal = {key: candidate[key] for key in ('tick', 'cash', 'vault', 'realizedTotal', 'ownerNetDeposits', 'running')}
@@ -124,7 +127,7 @@ class Store:
             public.pop('book', None)
             public.pop('intentOrders', None)
             public['canOpenDay'] = not public['dayClosed'] or clock(datetime.now(timezone.utc))[0] > public['reportDate']
-            return dict(state=public, agents=Engine(self.state).agents(), assets=ASSETS, paperOnly=True)
+            return dict(state=public, agents=Engine(self.state).agents(), assets=ASSETS, paperOnly=True,scope='paper-portfolio',serverTime=datetime.now(timezone.utc).isoformat())
 
     def close(self):
         self.db.close()
@@ -141,6 +144,7 @@ class Runtime:
         self.last_prices = None
         self.last_metadata = {}
         self.thread = None
+        self.exchange = LiveService(store)
 
     def prices(self):
         with self.fetch_lock:
@@ -176,7 +180,7 @@ class Runtime:
                     raise ValueError('Idempotency key was used for a different request')
                 return self.store.snapshot()
         generation = self.store.snapshot()['state'].get('stopGeneration', 0)
-        if name == 'step':
+        if name in ('step','refresh-market'):
             # Replayed commands must not require network access.
             with self.store.lock:
                 row = self.store.db.execute('SELECT request FROM commands WHERE id=?', (key,)).fetchone()
@@ -192,8 +196,11 @@ class Runtime:
             def apply(engine):
                 if engine.s.get('stopGeneration', 0) != generation:
                     raise ValueError('Step cancelled by emergency stop')
-                engine.step(prices, metadata=metadata)
-            return self.store.change('step', apply, key, request)
+                if name=='refresh-market':
+                    engine.observe(prices,metadata)
+                else:
+                    engine.step(prices,metadata=metadata)
+            return self.store.change(name,apply,key,request)
         signed = verify(self.store.operator_key, approval or '', name, data.get('amount')) if name in ('release', 'approve') else None
         def apply(engine):
             if signed:
@@ -210,7 +217,8 @@ class Runtime:
         deadline = time.monotonic()
         last_active = deadline
         while not self.quit.wait(.1):
-            snap = self.store.snapshot()['state']
+            with self.store.lock:
+                snap={key:self.store.state[key] for key in ('running','autoPace')}
             if not snap['running']:
                 deadline = time.monotonic()
                 last_active = deadline
@@ -224,7 +232,7 @@ class Runtime:
                 logging.warning('Kraken/ECB unavailable; tick skipped; retrying after interval')
             except Exception:
                 logging.exception('Engine stopped after unexpected failure')
-                self.store.change('runtime-error', lambda e: e.s.update(running=False))
+                self.store.change('runtime-error', lambda e: e.s.update(running=False,runtimeError='Motorn pausades efter ett internt fel. Läs systemloggen före återstart.'))
             last_active = started
             deadline = time.monotonic()+snap['autoPace']/1000
 
@@ -270,9 +278,11 @@ def make_server(runtime, port=8000):
             path = urlsplit(self.path).path
             if path == '/api/state':
                 self.send(200, runtime.store.snapshot())
+            elif path == '/api/exchange':
+                self.send(200,runtime.exchange.status())
             elif path == '/api/health':
                 snap = runtime.store.snapshot()
-                self.send(200, dict(status='ok', paperOnly=True, tick=snap['state']['tick'], marketData=snap['state']['marketData']))
+                self.send(200, dict(status='ok', paperOnly=True, scope='paper-engine',liveEnabled=runtime.exchange.enabled, tick=snap['state']['tick'], marketData=snap['state']['marketData']))
             elif path == '/api/export/trades.csv':
                 self.send(200, trades(runtime.store.snapshot()['state']), 'text/csv; charset=utf-8')
             elif path == '/api/export/capital.csv':
@@ -284,6 +294,8 @@ def make_server(runtime, port=8000):
                 self.send(200, data.encode(), 'application/x-ndjson; charset=utf-8')
             elif path == '/':
                 self.send(200, (ROOT/'index (2).html').read_bytes(), 'text/html; charset=utf-8')
+            elif path == '/dashboard.css':
+                self.send(200,(ROOT/'dashboard.css').read_bytes(),'text/css; charset=utf-8')
             elif path == '/dashboard.js':
                 self.send(200, (ROOT/'dashboard.js').read_bytes(), 'text/javascript; charset=utf-8')
             else:
@@ -310,23 +322,30 @@ def make_server(runtime, port=8000):
                 if not 1 <= len(key) <= 100:
                     raise ValueError('Idempotency-Key required')
                 path = urlsplit(self.path).path
+                if path.startswith('/api/exchange/'):
+                    self.send(200,runtime.exchange.run(path.rsplit('/',1)[-1],data,key,self.headers.get('X-Jarvis-Approval')))
+                    return
                 if not path.startswith('/api/commands/'):
                     self.send(404, dict(error='Not found'))
                     return
                 self.send(200, runtime.command(path.rsplit('/', 1)[-1], data, key, self.headers.get('X-Jarvis-Approval')))
+            except ExchangeUnknown as exc:
+                self.send(503,dict(error=str(exc),requiresReconciliation=True))
+            except ExchangeError as exc:
+                self.send(400,dict(error=str(exc)))
             except (ValueError, TypeError) as exc:
                 self.send(400, dict(error=str(exc)))
             except MarketError:
                 self.send(503, dict(error='Kraken/ECB unavailable; no tick executed'))
             except Exception:
                 logging.exception('Request failed')
-                self.send(500, dict(error='Internal error; transaction rolled back'))
+                self.send(500, dict(error='Internt fel. Uppdatera status och stäm av eventuell livebiljett innan fler försök.'))
 
     return ThreadingHTTPServer(('127.0.0.1', port), Handler)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='JARVIS v0.5.1 paper-only backend')
+    parser = argparse.ArgumentParser(description='JARVIS v0.6 paper engine and owner-approved Kraken adapter')
     parser.add_argument('--db', default=str(ROOT/'.jarvis/paper.sqlite3'))
     parser.add_argument('--port', type=int, default=8000)
     args = parser.parse_args()

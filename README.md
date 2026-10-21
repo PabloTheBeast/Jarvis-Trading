@@ -1,7 +1,13 @@
-# JARVIS Trading v0.5.1
+# JARVIS Trading v0.6 — Kraken och marknadsanalys
 
-**Enbart paper trading.** Python kör agenter, CHEF, riskkontroller, ordermotor och
-kapitalbokföring utan en öppen webbläsare. Den svenska dashboardens fem flikar finns kvar.
+Python kör agenter, CHEF, riskkontroller, ordermotor och kapitalbokföring utan en
+öppen webbläsare. **Agenterna handlar enbart med paper-kapital.** En separat
+Kraken-koppling stöder manuellt ägarsignerade riktiga limitorder och är avstängd
+som standard. Se [lokal Kraken-konfiguration](docs/KRAKEN-LIVE.md).
+
+Dashboarden har nio flikar: Översikt, Marknad, Beslut, Agenter, Portfölj, Risk & CHEF,
+Historik, System och Kraken-konto. Den använder systemtypsnitt, större tabelltext
+och separata saldon för paper-kapital i SEK och Kraken-kontot i EUR.
 
 ## Starta på Windows med Ubuntu/WSL
 
@@ -13,7 +19,7 @@ python3 -m backend.server
 ```
 
 Öppna serverns rot på port 8000 i Windows-webbläsaren och välj **Kör 1 steg** eller
-**Starta servermotor**. Låt Python-processen köra. Servern är avsiktligt bara åtkomlig
+**Starta paper**. Låt Python-processen köra. Servern är avsiktligt bara åtkomlig
 på loopback. Molnserverns loopback nås inte från en annan dator utan en tunnel.
 
 Krav: Python 3.12+ på Linux/WSL, SQLite, tidszonsdata. Inga pip-/npm-paket eller
@@ -50,7 +56,21 @@ uttryckligen igen. En global riskpaus ligger kvar tills skuggtest och ägargodk�
 - ECB-kursen cachas en timme och får vara högst sju kalenderdagar gammal.
 
 HTTPS krävs till `api.kraken.com` och `www.ecb.europa.eu`. TLS-verifiering behålls.
-Inga privata Kraken-anrop eller funktioner för verklig orderläggning finns.
+Privata Kraken-anrop används bara i den separata kontovyn efter lokal konfiguration.
+Inga agentbeslut skickas till Kraken och inga uttagsfunktioner finns.
+
+## Analys av riktig marknadsdata
+
+Marknad visar avslutade femminutersstaplar i ursprunglig EUR-kurs från Kraken,
+SMA20/50, Wilder RSI14, ATR14 och momentum. Minst 60 sammanhängande avslutade
+staplar krävs. Pågående staplar påverkar inte beslut; gammal historik eller luckor
+stoppar nya kryptosignaler. Strategierna fattar högst ett beslut per agent, par och
+stapel, oberoende av dashboardens uppdateringsintervall. Korrelation jämför samma
+tidsstämplar; okänd korrelation räknas konservativt som gemensam exponering.
+
+**Uppdatera marknad** uppdaterar analys och marknadsvärdering utan att lägga order
+eller flytta handelsdagen. Beslut visar regelbaserade signaler och deras underlag;
+dessa är beskrivningar av historiska data, inte prognoser eller vinstlöften.
 
 ## Risk, datum och kapital
 
@@ -134,7 +154,8 @@ CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_smoke.py
 
 Sviten testar bland annat hårda krascher före/efter commit, misslyckad journalskrivning,
 backup/restore, migration, veckoregler, dubbletter, exakt pengaräkning och åtta simulerade dygn.
-Browser-testet verifierar även signerat uttag och exportnedladdningar.
+Browser-testet verifierar även signerat paper-uttag, exportnedladdningar och hela
+Kraken-flödet med simulerad börs. Testet skickar inga privata nätverksanrop.
 
 API: `GET /api/state`, `GET /api/health`, `GET /api/export/trades.csv`,
 `GET /api/export/capital.csv`, `GET /api/export/journal.jsonl`.
@@ -142,11 +163,17 @@ Kommandon skickas till `POST /api/commands/<namn>` med JSON, `X-Jarvis-Client: d
 och en unik `Idempotency-Key`. Återanvänd samma nyckel bara för en retry av samma avsikt.
 `approve` och `release` kräver dessutom `X-Jarvis-Approval`; `release` kräver `approved: true`.
 
+API för den separata börskopplingen: `GET /api/exchange` (lokal cache) och
+`POST /api/exchange/check|preview|validate|submit|reconcile|cancel`. Samma
+ursprungs-/idempotenskrav gäller. `submit` och `cancel` kräver dessutom en
+biljettspecifik ägarsignatur. Se [Kraken-guide](docs/KRAKEN-LIVE.md).
+
 ## Återstående gränser
 
-Se [checklista och verifiering](docs/CHECKLIST-v0.5.1.md). Livehandel är avstängd.
-Verklig kontoavstämning, börsens avgifts-/lotregler, nätverksfel under faktisk
-orderläggning och verkliga uttag måste införas och testas separat innan livebruk.
+Se [kodgranskning](docs/REVIEW-v0.6.md), [aktuell verifiering](docs/VALIDATION.md)
+och [tidigare checklista](docs/CHECKLIST-v0.5.1.md). Liveorder är avstängda som standard.
+Den privata integrationen är testad med simulerad börs; verkligt konto, behörigheter
+och faktiskt finansierad exekvering har inte verifierats. Verkliga uttag stöds inte.
 Normalisering/paginering av hela historiken och långvarig drift under last återstår.
 Gamla localStorage-data importeras inte automatiskt. Regelbaserade agenter innebär
 ingen garanti om lönsamhet.

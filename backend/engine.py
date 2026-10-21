@@ -10,6 +10,7 @@ from .strategies import signal
 from .orders import OrderManager
 from .broker import PaperBroker
 from .accounting import Ledger
+from .analysis import correlation as candle_correlation
 
 INITIAL, FEE = 10000, .0015
 ASSETS = [
@@ -54,6 +55,7 @@ def new_state():
              quarantine={}, shadow={}, entryModes={}, riskEvents=[], running=False,
              marketData=dict(source='Kraken EUR / ECB SEK', status='waiting', at=None, error=None),
              reportDate=None, schemaVersion=2, closedDates=[], expansionDates=[],
+             marketAnalysis={}, signalDecisions={}, lastDecisions=[], revision=0,
              lastExpansionReview=0, intentOrders={}, approvals=[], capitalHistory=[], stopGeneration=0, paperBroker=dict(spreadBps=10, slippageBps=5, testFaults=False))
     for key in ('agentSpend', 'agentRealized', 'agentLosses', 'agentHalt', 'ownerCost',
                 'agentStatus', 'agentTrades', 'agentWins', 'agentGrossProfit',
@@ -94,6 +96,10 @@ class Engine:
         s['agentStatus'][aid] = 'AKTIV'
         s['ownerCost'][aid] = {}
         s['agentEquityHist'][aid] = []
+        if 'book' in s:
+            s['book']['agentRealized'][aid]=0
+            s['book']['riskBaseline'][aid]=0
+            s['book']['ownerCost'][aid]={}
         if quarantine:
             self.quarantine(a)
 
@@ -127,6 +133,9 @@ class Engine:
         return self.s['rngState'] / 4294967296
 
     def regime(self, symbol):
+        analysis = self.s.get('marketAnalysis', {}).get(symbol)
+        if analysis:
+            return analysis.get('trend', 'neutral') if analysis.get('status') == 'ready' else 'neutral'
         p = self.s['prices'][symbol][-7:]
         change = p[-1] / p[0] - 1 if len(p) >= 7 else 0
         return 'upptrend' if change > .018 else 'nedtrend' if change < -.018 else 'neutral' if len(p) < 7 else 'sidledes'
@@ -143,6 +152,10 @@ class Engine:
         return max(.35, min(1.15, .65 + rate * .65 + (.08 if stats['total'] > 0 else -.08)))
 
     def correlation(self, x, y):
+        if self.s.get('marketAnalysis') and (crypto(x) or crypto(y)):
+            if not (crypto(x) and crypto(y)):
+                return 1.0
+            return candle_correlation(self.s['marketAnalysis'].get(x,{}),self.s['marketAnalysis'].get(y,{}))
         p, q = self.s['prices'][x], self.s['prices'][y]
         n = min(len(p), len(q), 31) - 1
         if n < 12:
@@ -261,7 +274,41 @@ class Engine:
         return good
 
     def signal(self, a, symbol):
+        analysis=self.s.get('marketAnalysis',{}).get(symbol)
+        if crypto(symbol) and analysis is not None:
+            if analysis.get('status')!='ready':
+                return None
+            stamp=analysis['barId']
+            key=a['id']+'|'+symbol
+            if self.s.setdefault('signalDecisions',{}).get(key)==stamp:
+                return None
+            self.s['signalDecisions'][key]=stamp
+            side=analysis.get('signals',{}).get(a['strategy'])
+            self.s.setdefault('lastDecisions',[]).insert(0,dict(agent=a['name'],instrument=symbol,
+                strategy=a['strategy'],side=side or 'WAIT',barId=stamp,at=self.now.isoformat(),
+                reason=analysis.get('reasons',{}).get(a['strategy'],analysis.get('reason',''))))
+            del self.s['lastDecisions'][200:]
+            return side
         return signal(self.s, a, symbol)
+
+    def observe(self,prices,metadata):
+        """Public market refresh: mark holdings and analyse, never create a fill."""
+        required={'BTC-SIM','ETH-SIM'}
+        if set(prices)!=required or any(not math.isfinite(v) or v<=0 for v in prices.values()):
+            raise ValueError('Invalid public market snapshot')
+        if not metadata or metadata.get('connector')!='kraken-public':
+            raise ValueError('A verified public Kraken connector is required')
+        age=(self.now-datetime.fromisoformat(metadata['fetchedAt'])).total_seconds()
+        if not 0<=age<=30 or set(metadata.get('orderBooks',{}))!=required:
+            raise ValueError('Missing or stale public order books')
+        if metadata.get('snapshotId')!=self.s.get('lastObservedSnapshot'):
+            for symbol,price in prices.items():
+                self.s['prices'][symbol].append(price)
+                del self.s['prices'][symbol][:-256]
+            self.s['lastObservedSnapshot']=metadata['snapshotId']
+        self.s['marketData']=dict(metadata,status='ok',at=self.now.isoformat(),source='Kraken EUR / ECB SEK',error=None)
+        self.s['marketAnalysis']=metadata.get('analysis',{})
+        self.global_risk()
 
     def step(self, prices, now=None, metadata=None):
         s = self.s
@@ -302,6 +349,8 @@ class Engine:
         s['marketData'] = dict(source='Kraken EUR / ECB SEK', status='ok', at=self.now.isoformat(), error=None)
         if metadata:
             s['marketData'].update(metadata)
+            if 'analysis' in metadata:
+                s['marketAnalysis']=metadata['analysis']
         self.global_risk()
         agents = self.agents()
         for o in list(s['orders']):
