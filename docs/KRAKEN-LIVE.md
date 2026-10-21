@@ -1,9 +1,10 @@
 # Kraken: separat manuell orderläggning
 
-Agenter och CHEF analyserar kurser; automatisk agenthandel är inte aktiverad.
+Agenter och CHEF analyserar kurser; automatisk agenthandel kräver separat godkänd
+session enligt [sessionsguiden](SESSION-TRADING.md).
 Kraken-vyn visar verkligt saldo i EUR/BTC/ETH. Äldre simulerad bokföring är ett
 tekniskt arkiv och visas inte i den vanliga dashboarden. Kopplingen är ett begränsat manuellt pilotläge,
-inte en autonom livehandelsmotor. Inga riktiga order har skickats under utvecklingen.
+inte i sig ett automatiskt handelsmandat. Inga riktiga order har skickats under utvecklingen.
 
 ## Konfigurera i Ubuntu/WSL
 
@@ -90,7 +91,7 @@ begärd giltighetstid 60 sekunder, men slutstatus måste ändå hämtas från b�
   ett extra köpskydd; separat automatisk live-drawdownövervakning finns inte.
 - Livehändelser lagras i `live_events` med append-only-triggers; biljetter, orderstatus,
   avslut och avgifter är åtskilda från paper-journalen. SQLite-backup inkluderar dem.
-  CSV-exporterna i Historik gäller paper-portföljen. Ingen automatisk skattebokföring.
+  Arkivets CSV-exporter gäller enbart simulatorn. Ingen automatisk skattebokföring.
 
 ## Återställning och granskning
 
@@ -154,3 +155,5 @@ Historik visar köp → sälj enligt FIFO med avgifter, kvarvarande köp och fö
 med okänt inköp separat. Datum/tid visas i Stockholm med årtal och sekunder.
 Nuvarande order är manuella. Ingen historik för externa Kraken-order eller äldre
 innehav importeras automatiskt. Riktiga avslut hamnar aldrig i simulatorns journal.
+
+För budgetfördelning, ägarsignerad start, Avsluta trading och behåll-/säljbedömning: se [SESSION-TRADING.md](SESSION-TRADING.md).

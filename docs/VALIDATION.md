@@ -1,8 +1,8 @@
-# Verifiering av JARVIS v0.6
+# Verifiering av JARVIS v0.7
 
 Utförd 2026-10-21 i molnmiljön med Python 3.12.14, Node 24.19.0 och systemets Chromium.
 
-- **104 enhets-/API-tester passerade**, inga överhoppade tester. Befintliga tester för
+- **130 enhets-/API-tester passerade**, inga överhoppade tester. Befintliga tester för
   kapital, risk, migration, backup, hårda subprocesskrascher, 500 steg och åtta
   simulerade dygn passerar fortsatt. Simulerad tid bevisar inte långvarig drift.
 - Nya regressionstester täcker avslutade OHLC-staplar, luckor/gamla data, oberoende
@@ -32,7 +32,7 @@ Utförd 2026-10-21 i molnmiljön med Python 3.12.14, Node 24.19.0 och systemets 
 Inga riktiga order eller uttag skickades. Ingen privat Kraken-nyckel användes.
 Faktiskt saldo, API-behörigheter, credentialed validate=true och finansierad
 orderexekvering återstår att verifiera lokalt enligt [Kraken-guiden](KRAKEN-LIVE.md).
-Ingen autonom livehandel är implementerad. Windows/WSL eller en ny publicerad
+Automatisk sessionshandel är implementerad men bara verifierad med simulerad börs. Windows/WSL eller en ny publicerad
 molnuppgift har inte testats från denna maskin.
 
 Tidigare kalender-/driftbegränsningar i [v0.5.1-checklistan](CHECKLIST-v0.5.1.md)
@@ -82,3 +82,33 @@ kontrollerades också med verkliga publika data och utan privata nycklar: testl�
 avstängt, live avstängt, tidigare tick 14 bevarat, inga faktiska avslut påhittade,
 normal historik tom och inga JavaScript-fel. API-nycklar/finansierad exekvering är
 fortfarande inte verifierade i utvecklingsmiljön.
+
+Sessionshandel v0.7: 24 nya sessionstester täcker signerad budgetplan/start, nollsaldo,
+flagga/bevakningsspärr, granskad 100-EUR-fördelning, agentmärkta verkliga fill-fixtures,
+bar-deduplicering, aktiva manuella order spärrade, race vid avslut/start, stopp utan
+väntan på arbetstrådens nätverkslås, annullering före slutstatus, behåll-policy,
+CHEF:s exit-försäljning och verifierad roundtrip, extern insättning/saldodrift,
+verklig drawdown, positions-stop-loss, osäkert orderutfall utan omsändning,
+processomstart, serverstopp och automatisk sluttid. Ett HTTP-test verifierar samma
+origin, start utan signatur nekad, signerad start, idempotens och stopp utan ny kod.
+Äldre simulerade riskfält påverkar inte verklig allokering.
+
+Nytt Chromium-smoke browser_sessions.py passerade: granskning → lokal CLI-kod →
+start → automatiskt simulerat agentköp → avslut med HOLD → agentmärkt historik.
+Mobil 390 px och inga JavaScript-fel. Sessionens desktop-panel granskades visuellt.
+Alla marknads-/kontosvar och order i detta test är fake-börs. Ingen faktisk
+finansierad exekvering eller privat credentialed Kraken-validering har genomförts.
+
+Tillägg: signaturen är bunden till exakta agentbudgetar; upprepat stopp förlänger
+inte säljtillståndet. Utgången stapel före sändning skapar ingen order och inväntar
+ny stapel utan falsk riskpaus. Sessionsbiljetter kan inte skickas genom den manuella
+submit-vägen. Marknadsdatacachen hämtar om OHLC vid ny femminutersgräns så att en
+cachad ofullständig stapel inte befordras till slutlig handelssignal utan ny hämtning.
+Alla 130 tester passerar; ingen privat finansierad Kraken-validering har gjorts.
+
+Den ordinarie utvecklingsinstansen öppnades i Chromium med nya sessionspanelen:
+GET /api/trading-session svarar med enabled=false och session=null; start/avslut
+är avstängda utan plan. Instansen lämnades med JARVIS_MONITOR_ONLY=1,
+JARVIS_KRAKEN_LIVE=0 och JARVIS_AUTO_TRADING=0. Databasen säkerhetskopierades före
+omstart. Ingen sessionskod eller handelsaktivering användes mot ett verkligt konto.
+Fyra Chromium-script (legacy, advisory, history, sessions) passerar.

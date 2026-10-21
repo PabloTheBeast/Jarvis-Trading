@@ -151,12 +151,16 @@ class Runtime:
         self.exchange = LiveService(store,enabled=False if self.monitor_only else None)
         self.exchange.monitor_only=self.monitor_only
         self.exchange.monitoring=not self.paper_enabled or self.monitor_only
+        self.exchange.sessions.enabled=self.exchange.sessions.enabled and not self.paper_enabled
         self.monitor_thread=None
 
     def monitor_market(self):
         prices,metadata=self.prices()
         if not self.quit.is_set():
-            self.store.change('market-observation',lambda engine:engine.observe(prices,metadata))
+            def observe(engine):
+                engine.real_monitoring=not self.paper_enabled
+                engine.observe(prices,metadata)
+            self.store.change('market-observation',observe)
 
     def monitor_loop(self):
         market_due=account_due=0
@@ -169,6 +173,7 @@ class Runtime:
                     # No credential values or raw exchange responses enter logs.
                     logging.warning('Read-only market refresh failed; existing quote timestamps retained')
                 market_due=time.monotonic()+15
+                self.exchange.sessions.tick()
             if not self.quit.is_set() and now>=account_due:
                 try:
                     self.exchange.inspect()
@@ -283,6 +288,7 @@ class Runtime:
 
     def stop(self):
         self.quit.set()
+        self.exchange.sessions.shutdown()
         if self.monitor_thread:
             self.monitor_thread.join(45)
             if self.monitor_thread.is_alive():
@@ -325,6 +331,8 @@ def make_server(runtime, port=8000):
                 self.send(200, runtime.store.snapshot())
             elif path == '/api/exchange':
                 self.send(200,runtime.exchange.status())
+            elif path == '/api/trading-session':
+                self.send(200,runtime.exchange.sessions.status())
             elif path == '/api/health':
                 snap = runtime.store.snapshot()
                 self.send(200, dict(status='ok', paperOnly=True, scope='paper-engine',liveEnabled=runtime.exchange.enabled, tick=snap['state']['tick'], marketData=snap['state']['marketData']))
@@ -367,6 +375,9 @@ def make_server(runtime, port=8000):
                 if not 1 <= len(key) <= 100:
                     raise ValueError('Idempotency-Key required')
                 path = urlsplit(self.path).path
+                if path.startswith('/api/trading-session/'):
+                    self.send(200,runtime.exchange.sessions.run(path.rsplit('/',1)[-1],data,key,self.headers.get('X-Jarvis-Approval')))
+                    return
                 if path.startswith('/api/exchange/'):
                     self.send(200,runtime.exchange.run(path.rsplit('/',1)[-1],data,key,self.headers.get('X-Jarvis-Approval')))
                     return

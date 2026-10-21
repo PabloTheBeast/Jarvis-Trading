@@ -32,7 +32,7 @@ def review(engine):
             if symbol not in agent['ids']:continue
             strategy=agent['strategy']
             side=(analysis.get('signals',{}).get(strategy) or 'WAIT') if ready else 'WAIT'
-            eligible=not s['agentHalt'].get(agent['id']) and s['agentStatus'].get(agent['id'])!='KARANTÄN'
+            eligible=getattr(engine,'real_monitoring',False) or not s['agentHalt'].get(agent['id']) and s['agentStatus'].get(agent['id'])!='KARANTÄN'
             if eligible and side in votes:votes[side].add(strategy)
             reports[agent['id']+'|'+symbol]=dict(agent=agent['name'],agentId=agent['id'],instrument=symbol,
                 strategy=strategy,side=side,eligible=eligible,status='reading' if ready else 'waiting',
@@ -44,7 +44,7 @@ def review(engine):
         if not ready:reason='Ingen aktuell, verifierad stapel. Ingen köp- eller säljsignal.'
         elif len(votes['BUY'])>=2 and not votes['SELL']:side='BUY'
         elif len(votes['SELL'])>=2 and not votes['BUY']:side='SELL'
-        if side=='BUY' and (s['halt'] or s['globalPause']):
+        if side=='BUY' and not getattr(engine,'real_monitoring',False) and (s['halt'] or s['globalPause']):
             side='BLOCKED';reason='CHEF:s riskpaus blockerar köpsignalen.'
         elif side in ('BUY','SELL'):
             reason='Minst två olika strategier är överens, utan motsatt signal från övriga granskare.'

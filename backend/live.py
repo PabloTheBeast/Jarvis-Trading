@@ -40,6 +40,8 @@ def decimal(value,positive=False):
 
 def fingerprint(ticket):
     fields={key:ticket[key] for key in ('id','pair','side','volume','price','clientId','stopGeneration')}
+    for key in ('sessionId','agentId','intentId','signalBar'):
+        if key in ticket:fields[key]=ticket[key]
     return hashlib.sha256(json.dumps(fields,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
 
@@ -82,6 +84,8 @@ class LiveService:
                 if ticket['state'] in ('SENDING','CANCEL_REQUESTED'):
                     ticket['state']='UNKNOWN'
                     self.save(ticket,'RECOVERED_UNKNOWN')
+        from .sessions import Sessions
+        self.sessions=Sessions(self)
 
     def nonce(self):
         with self.store.lock,self.store.db:
@@ -115,10 +119,10 @@ class LiveService:
     def status(self):
         with self.store.lock:
             fills=[json.loads(row[0]) for row in self.store.db.execute('SELECT payload FROM live_fills')]
-        return dict(liveEnabled=self.enabled,maximumOrderEUR=str(self.maximum),mode='OWNER_APPROVED_LIMIT_ONLY',
+        return dict(liveEnabled=self.enabled,maximumOrderEUR=str(self.maximum),mode='OWNER_APPROVED_SESSIONS_AND_MANUAL_LIMITS',
             monitorOnly=self.monitor_only,monitoringActive=self.monitoring,marketRefreshSeconds=15 if self.monitoring else None,accountRefreshSeconds=60 if self.monitoring else None,
             connected=self.last_account is not None,checkedAt=self.last_check,error=self.last_error,
-            account=self.last_account,tickets=self.tickets()[:100],agentsUsePaperOnly=True,tradeHistory=history(fills),
+            account=self.last_account,tickets=self.tickets()[:100],agentsUsePaperOnly=False,agentsRequireSessionApproval=True,tradeHistory=history(fills),
             instructions='Konfigurera lokalt med python3 -m backend.ops configure-kraken. Börja med en nyckel utan uttagsrättigheter.')
 
     def account(self):
@@ -186,7 +190,8 @@ class LiveService:
                 when=datetime.fromtimestamp(float(stamp),timezone.utc).isoformat()
                 fills.append(dict(tradeId=ident,ticketId=ticket['id'],orderId=ticket['exchangeOrderId'],
                     pair=ticket['pair'],side=ticket['side'],quantity=str(volume),priceEUR=str(price),
-                    costEUR=str(cost),feeEUR=str(fee),executedAt=when,agentId=None,actor='Manuell'))
+                    costEUR=str(cost),feeEUR=str(fee),executedAt=when,agentId=ticket.get('agentId'),
+                    **({'sessionId':ticket['sessionId']} if ticket.get('sessionId') else {}),actor=ticket.get('agentId') or 'Manuell'))
         if sum((decimal(f['quantity']) for f in fills),Decimal(0))!=decimal(ticket.get('filledVolume','0')):
             raise ExchangeError('Avslutshistoriken är ofullständig; inga tidpunkter gissas.')
         with self.store.lock,self.store.db:
@@ -272,6 +277,8 @@ class LiveService:
                     equityEUR=str(equity),checkedAt=datetime.now(timezone.utc).isoformat(),pairRules=rule)
 
     def run(self,action,data,key,approval=None):
+        if action in {'preview','validate','submit'} and self.sessions.active():
+            raise ExchangeError('En agentsession pågår. Avsluta den innan manuella order förbereds.')
         if self.monitor_only and action in {'preview','validate','submit'}:
             raise ExchangeError('Bevakningsläge: läser bara kurser och konto. Ingen ny order kan förberedas eller skickas.')
         if not key or len(key)>100:
@@ -307,6 +314,8 @@ class LiveService:
                 self.save(result,'PREVIEW')
             else:
                 result=self.get(data.get('ticket'))
+                if result.get('sessionId') and action in ('validate','submit'):
+                    raise ExchangeError('Sessionsorder hanteras bara av den godkända sessionen. Skapa en ny manuell biljett för manuell handel.')
                 if action=='reconcile':
                     result=self.reconcile(result)
                 elif action=='validate':
@@ -345,10 +354,10 @@ class LiveService:
                     volume=ticket['volume'],price=ticket['price'],cl_ord_id=ticket['clientId'],
                     timeinforce='GTD',expiretm='+60',oflags='fciq',validate='true' if validate else 'false')
 
-    def mutate(self,ticket,action,approval,key):
+    def mutate(self,ticket,action,approval,key,session_authorizer=None):
         signed_action='live-order' if action=='submit' else 'live-cancel'
         subject=ticket['fingerprint'] if action=='submit' else ticket['fingerprint']+':cancel'
-        signed=verify(self.store.operator_key,approval or '',signed_action,subject=subject)
+        signed=session_authorizer(ticket,action) if session_authorizer else verify(self.store.operator_key,approval or '',signed_action,subject=subject)
         if action=='submit':
             if not self.enabled:
                 raise ExchangeError('Liveorder är avstängda. Ägaren måste starta servern med JARVIS_KRAKEN_LIVE=1.')
@@ -361,24 +370,25 @@ class LiveService:
                 raise ExchangeError('Kraken-valideringen är för gammal.')
             ticket['risk']=self.preflight(ticket)
             with self.store.lock:
-                if ticket['side']=='buy' and (self.store.state['halt'] or self.store.state['globalPause']):
+                if not session_authorizer and ticket['side']=='buy' and (self.store.state['halt'] or self.store.state['globalPause']):
                     raise ExchangeError('CHEF har en aktiv riskpaus; ingen ny liveorder tillåts.')
             method,parameters='AddOrder',self.parameters(ticket,False)
         else:
             if ticket['state'] not in ACTIVE or not ticket.get('exchangeOrderId'):
                 raise ExchangeError('Ett känt aktivt Kraken-order-ID krävs för annullering.')
             method,parameters='CancelOrder',dict(txid=ticket['exchangeOrderId'])
-        verify(self.store.operator_key,approval or '',signed_action,subject=subject)
+        if not session_authorizer:verify(self.store.operator_key,approval or '',signed_action,subject=subject)
         ticket.update(state='SENDING' if action=='submit' else 'CANCEL_REQUESTED',
                       actor=signed['actor'],approvalId=signed['nonce'])
         # Mark the request before network I/O, atomically with consumed approval.
         # If the process dies now, this ticket is UNKNOWN on restart, never resent.
         request=json.dumps(dict(action=action,data=dict(ticket=ticket['id'])),sort_keys=True,allow_nan=False)
         with self.store.lock,self.store.db:
+            if session_authorizer:session_authorizer(ticket,action)
             if action=='submit':
                 if self.store.state.get('stopGeneration',0)!=ticket['stopGeneration']:
                     raise ExchangeError('En paus/omstart har ogiltigförklarat biljetten. Skapa en ny förhandsgranskning.')
-                if ticket['side']=='buy' and (self.store.state['halt'] or self.store.state['globalPause']):
+                if not session_authorizer and ticket['side']=='buy' and (self.store.state['halt'] or self.store.state['globalPause']):
                     raise ExchangeError('CHEF har aktiverat riskpaus under orderkontrollen.')
             try:
                 self.store.db.execute('INSERT INTO live_approvals VALUES(?,?)',(signed['nonce'],ticket['id']))

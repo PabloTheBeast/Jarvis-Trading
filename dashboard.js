@@ -2,7 +2,7 @@
 
 const $ = id => document.getElementById(id);
 const app = {state:null, agents:[], assets:[], revision:-1, connected:false,
-  received:0, serverTime:0, tab:'overview', pending:0, polling:false, exchange:null, ticket:null, notices:null,desktopAlerts:false,paperMode:false};
+  received:0, serverTime:0, tab:'overview', pending:0, polling:false, exchange:null, ticket:null, notices:null,desktopAlerts:false,paperMode:false,trading:null};
 const tabs = ['overview','market','decisions','agents','portfolio','risk','history','system','exchange'];
 const sek = new Intl.NumberFormat('sv-SE',{style:'currency',currency:'SEK',maximumFractionDigits:2});
 const eur = new Intl.NumberFormat('sv-SE',{style:'currency',currency:'EUR',maximumFractionDigits:2});
@@ -139,7 +139,7 @@ async function poll(){
   app.polling=true;
   try{apply(await getJSON('/api/state'));}
   catch(error){app.connected=false;renderHealth();}
-  finally{app.polling=false;refreshExchange();}
+  finally{app.polling=false;refreshExchange();refreshTrading();}
 }
 async function command(name,data={}){
   if(app.pending&&name!=='stop')return;
@@ -176,7 +176,7 @@ function agentCard(agent){
     return node('button',{type:'button',class:'agent-chip','data-agent-id':id,click:()=>{$('agent-select').value=id;setTab('agents');renderAgents();}},[
       node('strong',{text:agent.name}),node('div',{class:'agent-sub',text:agent.strategy}),
       badge(reports.some(r=>r.status==='reading')&&dataFresh()?'Läser kurser':reports.length?'Inväntar kurser':'Datakälla ej ansluten'),
-      node('p',{class:'agent-note',text:reports.length?'Rapporterar till CHEF · ingen orderrätt':'Svenska aktier ej anslutna'})]);
+      node('p',{class:'agent-note',text:app.trading?.session?.status==='RUNNING'&&app.trading.session.budgets[id]?'Godkänd sessionsbudget: '+euro(app.trading.session.budgets[id]):reports.length?'Rapporterar till CHEF · ingen aktiv orderrätt':'Svenska aktier ej anslutna'})]);
   }
   return node('button',{type:'button',class:'agent-chip'+(selected?' selected':''),'data-agent-id':id,click:()=>{
     $('agent-select').value=id;setTab('agents');renderAgents();$('agent-detail-panel').scrollIntoView({block:'nearest'});
@@ -199,7 +199,7 @@ function renderAgents(){
     const fills=(app.exchange?.tradeHistory?.executions||[]).filter(f=>f.agentId===agent.id);
     $('agent-detail').replaceChildren(node('h3',{text:agent.name+' · '+agent.strategy}),
       ...reports.map(r=>node('p',{text:(r.instrument==='BTC-SIM'?'BTC/EUR':'ETH/EUR')+' · läst '+tradeTime(r.checkedAt)+' · '+r.side+' · '+r.reason})),
-      node('p',{text:fills.length?fills.map(f=>(f.side==='buy'?'Köpt ':'Sålt ')+f.quantity+' '+f.pair+' · '+tradeTime(f.executedAt)).join(' | '):'Inga verkliga affärer från denna agent. Automatisk agenthandel är inte aktiverad.'}));
+      node('p',{text:fills.length?fills.map(f=>(f.side==='buy'?'Köpt ':'Sålt ')+f.quantity+' '+f.pair+' · '+tradeTime(f.executedAt)).join(' | '):'Inga verkliga affärer från denna agent. Orderrätt finns bara under en godkänd session.'}));
     return;
   }
   const summary=node('div',{class:'stats small-stats'},[metric('Strategi',agent.strategy),metric('Budget',money(agent.budget)),metric('Innehav',money(agentValue(agent.id))),metric('Realiserat',money(s.agentRealized[agent.id]))]);
@@ -298,7 +298,7 @@ function renderDecisions(){
       badge(fresh?labels[report.side]:'Avvakta · ingen färsk bedömning',fresh&&report.side==='BUY'?'good':fresh&&report.side==='SELL'?'warn':''),
       node('p',{text:fresh?report.reason:'Inväntar färska kryptodata och en aktuell avslutad stapel. Starta bevakningsläget eller uppdatera marknaden.'}),
       node('p',{class:'caption',text:'Stapel avslutad: '+localTime(report?.closedAt)+' · Referenskurs: '+euro(report?.referenceEUR)}),
-      node('p',{class:'caption',text:'Bedömningen skickar ingen order. Verkligt konto, innehav och orderrisk är inte kontrollerade.'})]);
+      node('p',{class:'caption',text:'Bedömningen är ingen affär. Aktiva sessioner kan följa signalen efter separat konto- och riskkontroll.'})]);
   }));
   rows('agent-report-rows',Object.values(s.agentReports||{}).map(r=>[r.agent+' · '+(r.instrument==='BTC-SIM'?'BTC/EUR':'ETH/EUR'),localTime(r.checkedAt),
     badge(dataFresh()&&r.status==='reading'&&Date.parse(r.closedAt)+300000>app.serverTime+(performance.now()-app.received)?(r.eligible?(labels[r.side]||'Avvakta'):'Skuggranskning'):'Inväntar färska data'),
@@ -330,8 +330,8 @@ function renderHealth(){
   const checks=[['Server',transport?'Ansluten':'Frånkopplad',transport?'Lokalt API svarar.':'Kontrollera Python-processen.',transport?'good':'bad'],
     ['Marknadsdata',fresh?'Färska':'Inte färska',Number.isFinite(dataAge())?'Äldsta orderdjup: '+Math.floor(Math.max(0,dataAge()))+' sekunder.':'Ingen lyckad hämtning.',fresh?'good':'warn'],
     ['Marknadsanalys',ready+' / 2 par redo','Avslutade femminutersstaplar, SMA, RSI och ATR.',ready===2&&fresh?'good':'warn'],
-    [app.paperMode?'Testmotor':'Automatisk agenthandel',app.paperMode?(app.state?.running?'Kör':'Pausad'):'Avstängd',app.paperMode?'Uttryckligt testläge.':'Agenterna analyserar kurser och skickar inga riktiga order.',''],
-    ['CHEF',app.state?.halt?'Riskpaus':'Ingen global paus','Nya köp kräver alltid orderkontroll.',app.state?.halt?'warn':'good'],
+    [app.paperMode?'Testmotor':'Automatisk agenthandel',app.paperMode?(app.state?.running?'Kör':'Pausad'):(app.trading?.session?.status||'Inte startad'),app.paperMode?'Uttryckligt testläge.':'Orderrätt gäller bara inom en ägargodkänd session och dess budget.',''],
+    ['CHEF',app.paperMode?(app.state?.halt?'Riskpaus':'Ingen global paus'):(app.trading?.session?.status||'Bevakning'),'Verkliga köp kräver aktiv session och godkänd konto-/riskkontroll.',''],
     ['Svenska aktiekurser','Ingen extern källa','Aktier/ETF är syntetiska. Nordnet kräver separat anslutning och API-/dataåtkomst. Kalender: XSTO 2025–2027.','warn']];
   $('system-checks').replaceChildren(...checks.map(([label,value,detail,color])=>node('article',{class:'status-card'},[badge(label,color),node('strong',{text:value}),node('p',{text:detail})])));
 }
@@ -343,6 +343,60 @@ function render(){
 async function refreshExchange(){
   try{app.exchange=await getJSON('/api/exchange');renderExchange();}
   catch(error){text('exchange-message','Börsstatus kan inte hämtas: '+error.message);}
+}
+async function refreshTrading(){
+  try{
+    const result=await getJSON('/api/trading-session'),old=app.trading?.session,next=result.session;
+    if(old&&next&&Date.parse(next.updatedAt)<Date.parse(old.updatedAt))return;
+    app.trading=result;renderTrading();
+  }catch(error){
+    if(app.trading){app.trading.enabled=false;renderTrading();}
+    text('session-message','Sessionsstatus kan inte hämtas. En redan startad session kan köra vidare. Kontrollera servern och Kraken; inga nya startkommandon skickas automatiskt.');
+  }
+}
+function renderTrading(){
+  const t=app.trading,s=t?.session;
+  const labels={PLANNED:'Inväntar godkännande',RUNNING:'Trading pågår',STOPPING:'Avslutar · order kan pågå',PAUSED:'Riskpaus',RECOVERY:'Omstart · manuell avstämning',STOPPED:'Trading avslutad',STOPPED_HOLDINGS:'Avslutad · innehav behållna',CANCELLED:'Plan avbruten'};
+  text('session-state',s?labels[s.status]||s.status:'Bevakning');
+  $('session-state').className='badge '+(s?.status==='RUNNING'?'warn':['PAUSED','RECOVERY'].includes(s?.status)?'bad':'');
+  text('session-message',s?.reason||'Ingen session är startad. Insättningar aktiverar aldrig handel.');
+  const active=['RUNNING','STOPPING','PAUSED','RECOVERY'].includes(s?.status);
+  const locked=active||s?.status==='PLANNED';
+  for(const id of ['session-capital','session-duration','session-policy'])$(id).disabled=locked;
+  if(locked){$('session-capital').value=s.capitalEUR;$('session-duration').value=String(s.durationMinutes);$('session-policy').value=s.endPolicy;}
+  $('session-plan').disabled=app.pending>0||locked;
+  $('session-start').disabled=app.pending>0||!t?.enabled||s?.status!=='PLANNED'||!Object.values(s?.budgets||{}).some(value=>Number(value)>0);
+  text('session-stop',s?.status==='PLANNED'?'Avbryt plan':'Avsluta trading');
+  $('session-stop').disabled=!s||!['PLANNED','RUNNING','STOPPING','PAUSED','RECOVERY'].includes(s.status);
+  if(!s){text('session-plan-details','Förbered en budgetplan för att se CHEF:s fördelning. Nollsaldo går att granska men kan inte starta trading.');$('session-end-decisions').replaceChildren();return;}
+  const details=node('dl',{class:'facts'});
+  details.append(...[['Kapitaltak',euro(s.capitalEUR)],['Godkända nya köp totalt, inklusive avgifter',euro(s.newCashEUR)],['Verkliga köp inkl. avgifter hittills',euro(t.grossBuysEUR)],['Återstående mandat för nya köp',euro(t.remainingNewBuysEUR)],
+    ...Object.entries(s.budgets).map(([agent,value])=>[agent.toUpperCase()+' · intern budget',euro(value)]),
+    ['Förlust-/drawdowngräns',euro(s.maxLossEUR)],['Ordertak',euro(s.maxOrderEUR)],['Slut senast',tradeTime(s.expiresAt)],
+    ['Avslutspolicy',s.endPolicy==='assess'?'CHEF säljer vid säljsignal/stop-loss, behåller annars':'Behåll alla innehav'],['Sessions-ID',s.id]]
+    .map(([label,value])=>node('div',{},[node('dt',{text:label}),node('dd',{class:'mono',text:value})])));
+  $('session-plan-details').replaceChildren(details,node('p',{class:'caption',text:t.enabled?'För start: python3 -m backend.ops approve session-start --session '+s.id:
+    'Bevakningsläge eller automatisk handel avstängd. För sessionshandel krävs serverstart med JARVIS_KRAKEN_LIVE=1 och JARVIS_AUTO_TRADING=1, utan JARVIS_MONITOR_ONLY=1. En ny granskad plan och ägarkod krävs ändå.'}));
+  $('session-end-decisions').replaceChildren(...(s.endDecisions||[]).map(d=>node('p',{text:d.agentId.toUpperCase()+' · '+d.pair+' · '+quantity(d.quantity)+' · '+(d.decision==='HOLD'?'BEHÅLL':'SÄLJ PÅGÅR')+' · '+d.reason+' · '+tradeTime(d.at)})));
+}
+async function sessionAction(action){
+  const s=app.trading?.session;let data,approval=null;
+  if(action==='plan')data={capitalEUR:$('session-capital').value.trim().replace(',','.'),endPolicy:$('session-policy').value,durationMinutes:Number($('session-duration').value)};
+  else{
+    if(!s)return;
+    data={session:s.id};
+    if(action==='start'){
+      if(!confirm('Tillåt automatisk köp-/säljhandel på Kraken inom planen? Nya köp högst '+euro(s.newCashEUR)+', förlustgräns '+euro(s.maxLossEUR)+', slut senast '+tradeTime(s.expiresAt)+'. Avslutspolicy: '+s.endPolicy+'. Detta använder riktiga pengar.'))return;
+      approval=prompt('Skapa en engångskod i Ubuntu:\npython3 -m backend.ops approve session-start --session '+s.id+'\nKontrollera planen i terminalen och klistra in koden (120 sekunder).');
+      if(!approval)return;
+    }
+  }
+  app.pending++;showError('');renderTrading();
+  try{
+    const result=await post('/api/trading-session/'+action,data,approval);
+    app.trading={...app.trading,session:result,...(action==='plan'?{grossBuysEUR:'0',remainingNewBuysEUR:result.newCashEUR}:{})};renderTrading();
+  }catch(error){showError(error.message);}
+  finally{app.pending--;await refreshTrading();await refreshExchange();}
 }
 function renderExchange(){
   const e=app.exchange;if(!e)return;
@@ -361,7 +415,7 @@ function renderExchange(){
   text('live-cap',e.maximumOrderEUR+' EUR');
   text('exchange-message',e.error|| (e.connected?'Kraken-kontot kontrollerat '+localTime(e.checkedAt)+'. Saldon i EUR/BTC/ETH är verkliga och separata från paper.':'Inget privat Kraken-konto har kontrollerats. Börja med lokal konfiguration och Kontrollera konto.'));
   $('exchange-message').className='notice'+(e.error?' error':e.liveEnabled?' warn':'');
-  if(e.monitoringActive)$('exchange-message').append(document.createTextNode(' Automatisk bevakning: kryptokurser cirka var 15:e sekund, konto och order cirka var 60:e sekund. Ingen automatisk agenthandel.'));
+  if(e.monitoringActive)$('exchange-message').append(document.createTextNode(' Automatisk bevakning: kryptokurser cirka var 15:e sekund, konto och order cirka var 60:e sekund. Agenthandel kräver en godkänd session.'));
   $('live-balances').replaceChildren(metric('Verkligt EUR-saldo',balances?euro(balances.EUR.balance):'—','Tillgängligt: '+(balances?euro(balances.EUR.available):'—')),
     metric('Verkligt BTC-saldo',balances?quantity(balances.XBT.balance):'—','Tillgängligt: '+(balances?quantity(balances.XBT.available):'—')),
     metric('Verkligt ETH-saldo',balances?quantity(balances.ETH.balance):'—','Tillgängligt: '+(balances?quantity(balances.ETH.available):'—')),
@@ -385,13 +439,13 @@ function renderTicket(){
     const stale=app.state && t.stopGeneration!==app.state.stopGeneration;
     text('live-approval-help',stale?'En paus eller omstart har ogiltigförklarat denna biljett för insändning. Skapa en ny.':
       'Validering skickar ingen order. För insändning: python3 -m backend.ops approve live-order --ticket '+t.id);
-    $('live-submit').disabled=app.pending>0||!e?.liveEnabled||t.state!=='VALIDATED'||stale||Boolean(app.state?.halt&&t.side==='buy');
+    $('live-submit').disabled=app.pending>0||!e?.liveEnabled||t.state!=='VALIDATED'||stale||Boolean(t.sessionId)||Boolean(app.state?.halt&&t.side==='buy');
   }else{
     text('live-ticket-details','Förhandsgranska först ett exakt antal och limitpris.');
     $('live-submit').disabled=true;
   }
   $('live-preview').disabled=app.pending>0||!e?.connected||e?.monitorOnly;
-  $('live-validate').disabled=app.pending>0||!t||e?.monitorOnly||!['PREVIEW','VALIDATED','VALIDATION_FAILED'].includes(t.state);
+  $('live-validate').disabled=app.pending>0||!t||e?.monitorOnly||Boolean(t?.sessionId)||!['PREVIEW','VALIDATED','VALIDATION_FAILED'].includes(t.state);
   $('live-reconcile').disabled=app.pending>0||!active;
   $('live-cancel').disabled=app.pending>0||!active||!t?.exchangeOrderId;
 }
@@ -445,6 +499,7 @@ for(const [id,file] of [['export','trades.csv'],['export-capital','capital.csv']
   const link=node('a',{href:'/api/export/'+file,download:file});link.click();
 };
 $('refresh-status').onclick=()=>poll();
+for(const action of ['plan','start','stop'])$('session-'+action).onclick=()=>sessionAction(action);
 $('refresh-real-history').onclick=()=>exchangeAction('check');
 $('enable-alerts').onclick=async()=>{
   if(app.desktopAlerts){app.desktopAlerts=false;text('enable-alerts','Aktivera skrivbordsnotiser');return;}
@@ -463,6 +518,6 @@ $('live-form').addEventListener('submit',event=>{
   exchangeAction('preview',data);
 });
 for(const action of ['validate','submit','reconcile','cancel'])$('live-'+action).onclick=()=>{if(app.ticket)exchangeAction(action,{ticket:app.ticket.id});};
-poll();refreshExchange();
+poll();refreshExchange();refreshTrading();
 setInterval(poll,2000);
 setInterval(()=>{renderHealth();if(app.state&&['overview','decisions'].includes(app.tab))renderDecisions();},1000);

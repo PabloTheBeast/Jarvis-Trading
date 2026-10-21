@@ -41,6 +41,7 @@ class Kraken:
         self._rules_checked=0
         self._candles={}
         self._candles_checked={}
+        self._candles_bucket={}
 
     def public(self,method,query):
         with self.opener('https://api.kraken.com/0/public/'+method+'?'+query,timeout=10) as response:
@@ -69,13 +70,15 @@ class Kraken:
         return dict(rules)
 
     def candles(self,symbol,now):
-        if symbol not in self._candles or time.monotonic()-self._candles_checked.get(symbol,0)>=30:
+        bucket=int(now.timestamp())//300
+        if symbol not in self._candles or self._candles_bucket.get(symbol)!=bucket or time.monotonic()-self._candles_checked.get(symbol,0)>=30:
             result=self.public('OHLC','pair='+PAIRS[symbol]+'&interval=5')
             rows=pair_result(result,PAIRS[symbol])
             # Validate the entire response before retaining it.
             analyse(rows,now)
             self._candles[symbol]=rows
             self._candles_checked[symbol]=time.monotonic()
+            self._candles_bucket[symbol]=bucket
         return analyse(self._candles[symbol],now)
 
     def exchange_rate(self):
