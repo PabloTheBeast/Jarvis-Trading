@@ -144,7 +144,36 @@ class Runtime:
         self.last_prices = None
         self.last_metadata = {}
         self.thread = None
-        self.exchange = LiveService(store)
+        self.monitor_only=os.environ.get('JARVIS_MONITOR_ONLY')=='1'
+        self.exchange = LiveService(store,enabled=False if self.monitor_only else None)
+        self.exchange.monitor_only=self.monitor_only
+        self.monitor_thread=None
+
+    def monitor_market(self):
+        prices,metadata=self.prices()
+        if not self.quit.is_set():
+            self.store.change('market-observation',lambda engine:engine.observe(prices,metadata))
+
+    def monitor_loop(self):
+        market_due=account_due=0
+        while not self.quit.is_set():
+            now=time.monotonic()
+            if now>=market_due:
+                try:
+                    self.monitor_market()
+                except Exception:
+                    # No credential values or raw exchange responses enter logs.
+                    logging.warning('Read-only market refresh failed; existing quote timestamps retained')
+                market_due=time.monotonic()+15
+            if not self.quit.is_set() and now>=account_due:
+                try:
+                    self.exchange.inspect()
+                except (ExchangeError,ExchangeUnknown):
+                    logging.warning('Read-only Kraken account refresh failed; inspect account status')
+                except Exception:
+                    logging.warning('Read-only account refresh failed unexpectedly')
+                account_due=time.monotonic()+60
+            self.quit.wait(.5)
 
     def prices(self):
         with self.fetch_lock:
@@ -172,6 +201,8 @@ class Runtime:
         return self.store.change('tick', apply)
 
     def command(self, name, data, key, approval=None):
+        if self.monitor_only and name in ('start','step'):
+            raise ValueError('Bevakningsläge: handel är avstängd. Kurser och kontosaldo uppdateras automatiskt.')
         request = json.dumps(dict(name=name, data=data), sort_keys=True, allow_nan=False)
         with self.store.lock:
             prior = self.store.db.execute('SELECT request FROM commands WHERE id=?', (key,)).fetchone()
@@ -237,11 +268,19 @@ class Runtime:
             deadline = time.monotonic()+snap['autoPace']/1000
 
     def start(self):
+        if self.monitor_only:
+            self.monitor_thread=threading.Thread(target=self.monitor_loop,daemon=True)
+            self.monitor_thread.start()
+            return
         self.thread = threading.Thread(target=self.loop, daemon=True)
         self.thread.start()
 
     def stop(self):
         self.quit.set()
+        if self.monitor_thread:
+            self.monitor_thread.join(45)
+            if self.monitor_thread.is_alive():
+                raise RuntimeError('Monitor did not stop; database remains open until process exit')
         if self.thread:
             self.thread.join(45)
             if self.thread.is_alive():

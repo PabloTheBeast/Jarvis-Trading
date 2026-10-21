@@ -16,7 +16,7 @@ from backend.approval import issue
 from backend.engine import Engine,new_state
 from backend.kraken_private import KrakenPrivate,api_signature,ExchangeError,ExchangeUnknown,load_credentials,CredentialsMissing
 from backend.live import LiveService,fingerprint
-from backend.server import Store
+from backend.server import Store,Runtime
 
 NOW=datetime(2026,10,21,12,0,tzinfo=timezone.utc)
 
@@ -114,7 +114,7 @@ class Public:
         rules={symbol:dict(pair=pair,base=base,quote='EUR',priceStep='0.1',quantityStep='0.00000001',
                           minimumVolume='0.00001',minimumCost='0.5',status='online')
                for symbol,pair,base in [('BTC-SIM','XBTEUR','XBT'),('ETH-SIM','ETHEUR','ETH')]}
-        self.metadata=dict(connector='kraken-public',eurSek=10,fetchedAt=now,pairRules=rules,orderBooks={
+        self.metadata=dict(connector='kraken-public',snapshotId=str(time.time_ns()),eurSek=10,fetchedAt=now,pairRules=rules,orderBooks={
             'BTC-SIM':dict(bids=[[599990,2]],asks=[[600010,2]]),
             'ETH-SIM':dict(bids=[[24990,20]],asks=[[25010,20]])})
         if self.market_pause:self.market_pause()
@@ -374,6 +374,52 @@ class LiveTests(unittest.TestCase):
         self.live.run('submit',dict(ticket=ticket['id']),'send',self.approval(ticket))
         self.assertEqual(self.sends()[0]['pair'],'ETHEUR')
         with self.assertRaises(ExchangeError):self.live.run('check',{},'send')
+
+
+class MonitorTests(unittest.TestCase):
+    def test_monitor_runs_without_browser_or_funds_and_blocks_order_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=Store(Path(tmp)/'paper.db')
+            with patch.dict('os.environ',{'JARVIS_MONITOR_ONLY':'1','JARVIS_KRAKEN_LIVE':'1'}):
+                runtime=Runtime(store,Public())
+            private=Private();private.balance['ZEUR']['balance']='0'
+            runtime.exchange.private=private
+            try:
+                runtime.start()
+                deadline=time.monotonic()+3
+                while runtime.exchange.last_account is None and time.monotonic()<deadline:
+                    time.sleep(.01)
+                self.assertIsNotNone(runtime.exchange.last_account)
+                self.assertEqual(store.state['marketData']['connector'],'kraken-public')
+                self.assertEqual(store.state['tick'],0)
+                self.assertFalse(store.state['orders'])
+                self.assertFalse(store.state['running'])
+                self.assertFalse(runtime.exchange.enabled)
+                self.assertEqual({method for method,_ in private.calls},{'BalanceEx','OpenOrders'})
+                for action in ('start','step'):
+                    with self.assertRaises(ValueError):runtime.command(action,{},'blocked-'+action)
+                for action in ('preview','validate','submit'):
+                    with self.assertRaises(ExchangeError):runtime.exchange.run(action,{},'blocked-'+action)
+            finally:
+                runtime.stop();store.close()
+
+    def test_market_outage_does_not_stop_account_monitor(self):
+        from backend.market import MarketError
+        with tempfile.TemporaryDirectory() as tmp:
+            store=Store(Path(tmp)/'paper.db')
+            with patch.dict('os.environ',{'JARVIS_MONITOR_ONLY':'1'}):
+                runtime=Runtime(store,Public())
+            runtime.market.fetch=lambda:(_ for _ in ()).throw(MarketError('offline'))
+            runtime.exchange.private=Private()
+            try:
+                runtime.start()
+                deadline=time.monotonic()+3
+                while runtime.exchange.last_account is None and time.monotonic()<deadline:
+                    time.sleep(.01)
+                self.assertIsNotNone(runtime.exchange.last_account)
+                self.assertEqual(store.state['tick'],0)
+            finally:
+                runtime.stop();store.close()
 
 
 if __name__=='__main__':

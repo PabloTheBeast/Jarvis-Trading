@@ -56,6 +56,7 @@ class LiveService:
         self.last_account=None
         self.last_check=None
         self.last_error=None
+        self.monitor_only=False
         with store.lock:
             store.db.executescript('''
                 CREATE TABLE IF NOT EXISTS live_meta(key TEXT PRIMARY KEY,value INTEGER NOT NULL);
@@ -106,6 +107,7 @@ class LiveService:
 
     def status(self):
         return dict(liveEnabled=self.enabled,maximumOrderEUR=str(self.maximum),mode='OWNER_APPROVED_LIMIT_ONLY',
+            monitorOnly=self.monitor_only,marketRefreshSeconds=15 if self.monitor_only else None,accountRefreshSeconds=60 if self.monitor_only else None,
             connected=self.last_account is not None,checkedAt=self.last_check,error=self.last_error,
             account=self.last_account,tickets=self.tickets()[:100],agentsUsePaperOnly=True,
             instructions='Konfigurera lokalt med python3 -m backend.ops configure-kraken. Börja med en nyckel utan uttagsrättigheter.')
@@ -223,6 +225,8 @@ class LiveService:
                     equityEUR=str(equity),checkedAt=datetime.now(timezone.utc).isoformat(),pairRules=rule)
 
     def run(self,action,data,key,approval=None):
+        if self.monitor_only and action in {'preview','validate','submit'}:
+            raise ExchangeError('Bevakningsläge: läser bara kurser och konto. Ingen ny order kan förberedas eller skickas.')
         if not key or len(key)>100:
             raise ExchangeError('Idempotency-Key krävs.')
         if action not in {'preview','validate','submit','reconcile','cancel','check'}:

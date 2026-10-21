@@ -36,6 +36,39 @@ Efter **varje processomstart**, även efter en krasch, är motorn pausad. Starta
 uttryckligen igen. En global riskpaus ligger kvar tills skuggtest och ägargodkännande
 är klara. Övervakningstjänsten får återstarta processen men inte återuppta handeln.
 
+## Bevakning utan insättning eller handel
+
+Stoppa servern och starta den i Ubuntu/WSL med:
+
+```bash
+JARVIS_MONITOR_ONLY=1 python3 -m backend.server
+```
+
+Detta är ett separat bevakningsläge: publika BTC/EUR- och ETH/EUR-kurser och analys
+uppdateras automatiskt cirka var 15:e sekund och privat kontosaldo/öppna order
+cirka var 60:e sekund. Nätverkstid tillkommer. Servern måste vara igång, men
+webbläsaren kan stängas. Ingen insättning behövs; nollsaldo är giltigt. Kontoläsning
+kräver den lokala Kraken-nyckeln och behörighet att läsa medel och öppna order.
+
+Start av paper-motorn, manuella handelssteg samt nya Kraken-order inklusive
+preview/validate blockeras i detta läge. Liveflaggan åsidosätts till avstängd även
+om den råkar finnas i miljön. Befintliga riktiga order annulleras inte automatiskt;
+ägarsignerad annullering och avstämning är fortfarande möjliga. Pausa paper stoppar
+inte kursbevakningen; avsluta servern med Ctrl+C för att stoppa bevakningen.
+
+Detta är periodiska snapshots, inte en börsens tick-för-tick-ström. Vid nätverksfel
+visar befintliga tidsstämplar att kurserna blivit gamla; ett fel i kursbevakningen
+stoppar inte kommande försök till kontoläsning. Uppdateringar går sekventiellt och
+långa nätverksanrop kan fördröja nästa läsning. Inga Kraken-nycklar behövs för publika
+kurser; kontovyn visar konfigurationsfel tills en nyckel finns.
+
+**Svenska aktier och ETF:er är fortfarande syntetiska.** En svensk datakälla och
+dess åtkomst/licens måste väljas innan riktig aktiebevakning kan anslutas. De
+syntetiska instrumenten visas uttryckligen som sådana och är inte börsdata.
+Se [Nordnet och återstående anslutning](docs/NORDNET.md).
+CHEF kan fördela paper-budgetar, men ingen automatisk livebudget eller agenthandel
+mot Kraken är implementerad. En framtida insättning aktiverar inte agenthandel.
+
 ## Data och paper-exekvering
 
 - Kraken publika BTC/ETH-tickers och orderdjup i EUR; ECB:s daterade dagliga

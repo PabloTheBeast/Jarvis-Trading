@@ -2,7 +2,7 @@
 
 Utförd 2026-10-21 i molnmiljön med Python 3.12.14, Node 24.19.0 och systemets Chromium.
 
-- **84 enhets-/API-tester passerade**, inga överhoppade tester. Befintliga tester för
+- **88 enhets-/API-tester passerade**, inga överhoppade tester. Befintliga tester för
   kapital, risk, migration, backup, hårda subprocesskrascher, 500 steg och åtta
   simulerade dygn passerar fortsatt. Simulerad tid bevisar inte långvarig drift.
 - Nya regressionstester täcker avslutade OHLC-staplar, luckor/gamla data, oberoende
@@ -37,3 +37,13 @@ molnuppgift har inte testats från denna maskin.
 
 Tidigare kalender-/driftbegränsningar i [v0.5.1-checklistan](CHECKLIST-v0.5.1.md)
 gäller fortsatt. Skyddade paper-saldon och exporterna där avser simulerade pengar.
+
+Tillägg: säker visning av kända Kraken-felkoder testas utan exponering av råa
+okända felmeddelanden. Bevakningsläge testas i bakgrund utan webbläsare med
+nollsaldo och simulerad börs: inga avslut/handelssteg, bara BalanceEx/OpenOrders,
+blockerade ordervägar och avstängd liveflagga även vid motstridiga miljövariabler.
+Kursfel stoppar inte kontoläsning. Ingen finansierad order skickades.
+
+Ett separat Chromium-test av bevakningsläget passerade med simulerat nollsaldo:
+läget visas i Kraken-vyn, preview/submit är avstängda, inga JavaScript-fel och
+bara läsanrop till fake-börsen. Nordnet-åtkomst har inte verifierats eller anslutits.

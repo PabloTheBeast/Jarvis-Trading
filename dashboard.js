@@ -281,7 +281,7 @@ function renderHealth(){
     ['Marknadsanalys',ready+' / 2 par redo','Avslutade femminutersstaplar, SMA, RSI och ATR.',ready===2&&fresh?'good':'warn'],
     ['Paper-motor',app.state?.running?'Kör':'Pausad',app.state?.runtimeError||'Processomstart lämnar motorn pausad.',app.state?.runtimeError?'bad':''],
     ['CHEF',app.state?.halt?'Riskpaus':'Ingen global paus','Nya köp kräver alltid orderkontroll.',app.state?.halt?'warn':'good'],
-    ['Syntetiska aktier','Nasdaq Stockholm 2025–2027','Helgdagar och halvdagar. Inte riktiga aktiekurser.','']];
+    ['Svenska aktiekurser','Ingen extern källa','Aktier/ETF är syntetiska. Nordnet kräver separat anslutning och API-/dataåtkomst. Kalender: XSTO 2025–2027.','warn']];
   $('system-checks').replaceChildren(...checks.map(([label,value,detail,color])=>node('article',{class:'status-card'},[badge(label,color),node('strong',{text:value}),node('p',{text:detail})])));
 }
 function render(){
@@ -295,16 +295,17 @@ async function refreshExchange(){
 }
 function renderExchange(){
   const e=app.exchange;if(!e)return;
-  text('live-mode',e.liveEnabled?'Live tillåtet · ägargodkännande krävs':'Live avstängt');
+  text('live-mode',e.monitorOnly?'Bevakningsläge · handel avstängd':e.liveEnabled?'Live tillåtet · ägargodkännande krävs':'Live avstängt');
   $('live-mode').className='badge '+(e.liveEnabled?'warn':'');
   text('live-cap',e.maximumOrderEUR+' EUR');
   text('exchange-message',e.error|| (e.connected?'Kraken-kontot kontrollerat '+localTime(e.checkedAt)+'. Saldon i EUR/BTC/ETH är verkliga och separata från paper.':'Inget privat Kraken-konto har kontrollerats. Börja med lokal konfiguration och Kontrollera konto.'));
   $('exchange-message').className='notice'+(e.error?' error':e.liveEnabled?' warn':'');
+  if(e.monitorOnly)$('exchange-message').append(document.createTextNode(' Automatisk bevakning: kryptokurser cirka var 15:e sekund, konto var 60:e sekund. Ingen handel.'));
   const balances=e.account?.balances;
   $('live-balances').replaceChildren(metric('Verkligt EUR-saldo',balances?euro(balances.EUR.balance):'—','Tillgängligt: '+(balances?euro(balances.EUR.available):'—')),
     metric('Verkligt BTC-saldo',balances?quantity(balances.XBT.balance):'—','Tillgängligt: '+(balances?quantity(balances.XBT.available):'—')),
     metric('Verkligt ETH-saldo',balances?quantity(balances.ETH.balance):'—','Tillgängligt: '+(balances?quantity(balances.ETH.available):'—')),
-    metric('Öppna Kraken-order',e.account?.openOrderCount??'—','Hämtas bara vid uttrycklig kontokontroll'));
+    metric('Öppna Kraken-order',e.account?.openOrderCount??'—',e.monitorOnly?'Uppdateras automatiskt cirka var 60:e sekund':'Hämtas bara vid uttrycklig kontokontroll'));
   if(app.ticket)app.ticket=e.tickets.find(t=>t.id===app.ticket.id)||app.ticket;
   rows('live-orders',e.tickets.map(t=>[node('span',{class:'mono',text:t.id.slice(0,15)+'…'}),t.pair+' '+t.side,t.volume+' / '+t.price,badge(t.state,statusTone(t.state)),
     node('span',{class:'mono',text:t.exchangeOrderId||'—'}),node('button',{type:'button',text:'Visa',click:()=>{app.ticket=t;renderTicket();}})]),'Inga livebiljetter.',6);
@@ -328,8 +329,8 @@ function renderTicket(){
     text('live-ticket-details','Förhandsgranska först ett exakt antal och limitpris.');
     $('live-submit').disabled=true;
   }
-  $('live-preview').disabled=app.pending>0||!e?.connected;
-  $('live-validate').disabled=app.pending>0||!t||!['PREVIEW','VALIDATED','VALIDATION_FAILED'].includes(t.state);
+  $('live-preview').disabled=app.pending>0||!e?.connected||e?.monitorOnly;
+  $('live-validate').disabled=app.pending>0||!t||e?.monitorOnly||!['PREVIEW','VALIDATED','VALIDATION_FAILED'].includes(t.state);
   $('live-reconcile').disabled=app.pending>0||!active;
   $('live-cancel').disabled=app.pending>0||!active||!t?.exchangeOrderId;
 }

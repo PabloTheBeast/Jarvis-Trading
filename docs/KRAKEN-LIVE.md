@@ -127,3 +127,16 @@ Vid behov mata in rätt nyckelpar på nytt lokalt med
 `KRAKEN_API_KEY` och `KRAKEN_API_SECRET` har företräde framför filen om de är satta;
 att ersätta filen ändrar inte dessa. Dela bara felkoden/anropsnamnet vid felsökning,
 aldrig nyckelfilen, API-hemligheter eller innehållet i miljövariablerna.
+
+## Bara bevakning, utan finansiering
+
+Använd `JARVIS_MONITOR_ONLY=1 python3 -m backend.server` för automatisk läsning av
+kryptokurser (cirka 15 sekunder) och konto/öppna order (cirka 60 sekunder).
+Nollsaldo är tillåtet. Ingen order skickas, paper-handelssteg blockeras och inga
+nya livebiljetter får förberedas eller valideras. En eventuell liveflagga åsidosätts.
+Tidigare order på Kraken påverkas inte. Ägarsignerad annullering och avstämning
+är fortfarande möjliga. Minsta nyckelbehörighet för bevakning är Fråga för medel
+samt Fråga efter öppna order och affärer. Publika kurser kräver ingen nyckel.
+
+Bevakningen fördelar inte kapital till agenter och är inte autonom livehandel.
+Svenska aktiekurser är ännu syntetiska och kräver en separat datakälla.
