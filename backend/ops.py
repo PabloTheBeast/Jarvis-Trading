@@ -38,9 +38,10 @@ def main():
     parser.add_argument('--db', default=str(Path(__file__).resolve().parents[1]/'.jarvis/paper.sqlite3'))
     commands = parser.add_subparsers(dest='operation', required=True)
     owner = commands.add_parser('approve', help='Create a single-use owner approval, valid for 120 seconds')
-    owner.add_argument('action', choices=['release', 'resume', 'approve', 'live-order', 'live-cancel'])
+    owner.add_argument('action', choices=['release', 'resume', 'approve', 'live-order', 'live-cancel','session-start'])
     owner.add_argument('--amount', type=str)
     owner.add_argument('--ticket',type=str)
+    owner.add_argument('--session',type=str)
     credentials=commands.add_parser('configure-kraken',help='Write local owner-only Kraken credentials; inputs are hidden')
     credentials.add_argument('--replace',action='store_true')
     health = commands.add_parser('check', help='Check local service health; require fresh data when running')
@@ -52,6 +53,15 @@ def main():
         if not Path(args.db).is_file():
             parser.error('Start the server once before creating owner approvals')
         subject=None
+        if args.action=='session-start':
+            from .sessions import digest
+            if not args.session:parser.error('--session is required')
+            with sqlite3.connect(Path(args.db).resolve().as_uri()+'?mode=ro',uri=True) as db:
+                row=db.execute('SELECT payload FROM trading_sessions WHERE id=?',(args.session,)).fetchone()
+            if not row:parser.error('Session not found')
+            session=json.loads(row[0]);subject=digest(session)
+            if session.get('fingerprint')!=subject or session['status']!='PLANNED':parser.error('A new unchanged plan is required')
+            print('AUTOMATISK KRAKEN-HANDEL: kapitaltak '+session['capitalEUR']+' EUR, nya köp högst '+session['newCashEUR']+' EUR, budgetar '+json.dumps(session['budgets'])+'; förlustgräns '+session['maxLossEUR']+' EUR; avslutspolicy '+session['endPolicy']+'; slut senast '+session['expiresAt']+'; max 15 min säljavslut därefter. Inga uttag. Godkänn bara om planen stämmer.',file=sys.stderr)
         if args.action in ('live-order','live-cancel'):
             from .live import fingerprint
             if not args.ticket:

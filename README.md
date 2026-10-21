@@ -1,9 +1,10 @@
-# JARVIS Trading v0.6 — Kraken och marknadsanalys
+# JARVIS Trading v0.7 — godkända agentsessioner
 
 Python kör kursbevakning och agentbedömningar utan en öppen webbläsare.
 **Vanlig start visar verkligt Kraken-konto och bekräftade affärer; simulerad handel
-är avstängd och gamla testaffärer visas inte.** Agenterna analyserar och rapporterar
-till CHEF, men skickar inga riktiga order. Manuella ägarsignerade Kraken-limitorder
+är avstängd och gamla testaffärer visas inte.** Agenterna analyserar och rapporterar till CHEF. Automatisk orderläggning kräver
+en separat förberedd, ägarsignerad och tidsbegränsad session; insättningar eller
+serverstart aktiverar aldrig sådan handel. Manuella ägarsignerade Kraken-limitorder
 är avstängda som standard. Se [lokal Kraken-konfiguration](docs/KRAKEN-LIVE.md).
 
 Dashboarden visar Översikt, Marknad, Beslut, Agenter, Historik, System och
@@ -66,8 +67,18 @@ kurser; kontovyn visar konfigurationsfel tills en nyckel finns.
 dess åtkomst/licens måste väljas innan riktig aktiebevakning kan anslutas. De
 syntetiska instrumenten visas uttryckligen som sådana och är inte börsdata.
 Se [Nordnet och återstående anslutning](docs/NORDNET.md).
-CHEF kan fördela paper-budgetar, men ingen automatisk livebudget eller agenthandel
-mot Kraken är implementerad. En framtida insättning aktiverar inte agenthandel.
+För godkända verkliga budgetar och start-/avslutsflöde, se
+[Sessionshandel på Kraken](docs/SESSION-TRADING.md). En insättning aktiverar aldrig agenthandel.
+
+## Starta och avsluta godkänd trading
+
+Översikt har en separat sessionspanel. Förbered en budgetplan, kontrollera kapital,
+förlustgräns, sluttid och avslutspolicy, och godkänn Starta trading med en lokal
+`session-start`-kod. Avsluta trading stoppar nya köp och genomför vald behåll-/säljbedömning.
+Standardstart och `JARVIS_MONITOR_ONLY=1` ger ingen automatisk orderrätt. Sessionshandel
+kräver både `JARVIS_KRAKEN_LIVE=1` och `JARVIS_AUTO_TRADING=1` utan bevaknings-/testflagga.
+Läs [hela sessionsguiden](docs/SESSION-TRADING.md) före aktivering. Svenska aktier är
+ännu inte anslutna. Finansierad exekvering har inte testats i utvecklingsmiljön.
 
 ## Agentrapporter och meddelanden från CHEF
 
@@ -117,8 +128,8 @@ Kvarvarande köp visas separat. Försäljning utan känt inköp får okänt ink�
  och inget gissat resultat. Historiken omfattar inte automatiskt externa Kraken-order
 eller äldre kontoinnehav. Den är inte en skatte-/portföljbok.
 
-Nuvarande verkliga order är manuella och märks **Manuell**. Inga affärer tillskrivs
-agenter som inte lagt dem. Automatisk agenthandel är fortfarande inte implementerad.
+Manuella order märks **Manuell**. Godkända sessionsorder får rätt agent-ID och
+sessions-ID genom hela order-/avslutskedjan. Inga affärer tillskrivs en annan agent.
 
 Gamla simulerade pengar, köp/sälj, avkastning och testkontroller visas inte i den
 vanliga dashboarden. Befintlig databas och journal bevaras som tekniskt arkiv;
@@ -243,6 +254,7 @@ node --check dashboard.js
 CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_smoke.py
 CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_advisory.py
 CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_trade_history.py
+CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_sessions.py
 ```
 
 Sviten testar bland annat hårda krascher före/efter commit, misslyckad journalskrivning,
@@ -255,6 +267,10 @@ API: `GET /api/state`, `GET /api/health`, `GET /api/export/trades.csv`,
 Kommandon skickas till `POST /api/commands/<namn>` med JSON, `X-Jarvis-Client: dashboard`
 och en unik `Idempotency-Key`. Återanvänd samma nyckel bara för en retry av samma avsikt.
 `approve` och `release` kräver dessutom `X-Jarvis-Approval`; `release` kräver `approved: true`.
+
+Sessions-API: `GET /api/trading-session` och `POST /api/trading-session/plan|start|stop`.
+Start kräver planspecifik `X-Jarvis-Approval`; stop kräver ingen ny signatur och
+får inte blockeras av orderarbetarens nätverkslås. Samma ursprungs-/idempotenskrav gäller.
 
 API för den separata börskopplingen: `GET /api/exchange` (lokal cache) och
 `POST /api/exchange/check|preview|validate|submit|reconcile|cancel`. Samma

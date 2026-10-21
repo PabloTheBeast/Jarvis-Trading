@@ -31,3 +31,5 @@ summary{cursor:pointer;font-weight:600;min-height:30px}details[open]>summary{mar
 body:not(.paper-mode) .paper-ui{display:none!important}body.paper-mode .real-ui{display:none!important}
 
 @media(max-width:760px){.app-header{flex-wrap:wrap;gap:12px}.header-status{min-width:0;max-width:100%}.header-status .badge{white-space:normal}}
+
+.form-grid label,.form-grid select{min-width:0}

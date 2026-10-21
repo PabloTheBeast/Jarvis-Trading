@@ -66,6 +66,8 @@ class ServerTests(unittest.TestCase):
         self.store.close()
         self.store = Store(self.path)
         self.runtime.store = self.store
+        from backend.live import LiveService
+        self.runtime.exchange=LiveService(self.store)
         self.assertEqual(self.command('deposit', dict(amount=100), 'deposit-1')[1]['state']['cash'], 10100)
         self.assertEqual(self.command('deposit', dict(amount=101), 'deposit-1')[0], 400)
 
@@ -116,6 +118,25 @@ class ServerTests(unittest.TestCase):
     def test_process_lock_prevents_second_writer(self):
         with self.assertRaises(RuntimeError):
             Store(self.path)
+
+    def test_session_http_requires_owner_approval_and_stop_needs_no_new_signature(self):
+        from backend.live import LiveService
+        from backend.approval import issue
+        from test_sessions import SessionMarket,SessionPrivate
+        self.runtime.exchange=LiveService(self.store,SessionMarket(),SessionPrivate(),enabled=True)
+        self.runtime.exchange.sessions.enabled=True
+        data=dict(capitalEUR='100',endPolicy='hold',durationMinutes=120)
+        self.assertEqual(self.request('/api/trading-session/plan',data,'bad-origin',{'X-Jarvis-Client':'other'})[0],403)
+        code,plan=self.request('/api/trading-session/plan',data,'session-plan')
+        self.assertEqual(code,200)
+        target=dict(session=plan['id'])
+        self.assertEqual(self.request('/api/trading-session/start',target,'unsigned-session')[0],400)
+        token=issue(self.store.operator_key,'session-start',subject=plan['fingerprint'])
+        code,result=self.request('/api/trading-session/start',target,'signed-session',{'X-Jarvis-Approval':token})
+        self.assertEqual((code,result['status']),(200,'RUNNING'))
+        self.assertEqual(self.request('/api/trading-session/start',target,'signed-session')[1]['status'],'RUNNING')
+        self.assertEqual(self.request('/api/trading-session/stop',target,'stop-session')[1]['status'],'STOPPING')
+        self.assertEqual(self.request('/api/trading-session')[1]['session']['status'],'STOPPING')
 
     def test_network_failure_executes_no_tick_or_fill(self):
         class Offline:

@@ -1,13 +1,28 @@
 import io
 import json
 import unittest
-from datetime import date, timedelta
+from datetime import date, timedelta,datetime,timezone
 import time
 
 from backend.market import Kraken, MarketError
 
 
 class MarketTests(unittest.TestCase):
+    def test_cached_active_candle_is_refetched_at_boundary_before_becoming_closed(self):
+        boundary=datetime(2026,10,21,12,0,tzinfo=timezone.utc)
+        stamp=int(boundary.timestamp())
+        rows=[[stamp-(90-i)*300,'100','101','99','100','100','3',1] for i in range(90)]
+        final=[list(row) for row in rows];final[-1]=[stamp-300,'100','105','99','104','104','3',1]
+        final.append([stamp,'104','105','103','104','104','3',1])
+        responses=[{'XXBTZEUR':rows},{'XXBTZEUR':final}];calls=[]
+        market=Kraken()
+        def public(method,query):calls.append(method);return responses.pop(0)
+        market.public=public
+        market.candles('BTC-SIM',boundary-timedelta(seconds=1))
+        result=market.candles('BTC-SIM',boundary+timedelta(seconds=1))
+        self.assertEqual(calls,['OHLC','OHLC'])
+        self.assertEqual(result['close'],104)
+
     def opener(self, payload=None, day=None):
         xml = ('<Envelope><Cube><Cube time=\"'+(day or date.today().isoformat())+'\">'
                '<Cube currency=\"SEK\" rate=\"11.1\"/></Cube></Cube></Envelope>').encode()
