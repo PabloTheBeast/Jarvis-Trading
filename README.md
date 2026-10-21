@@ -1,4 +1,4 @@
-# JARVIS Trading v0.7 — godkända agentsessioner
+# JARVIS Trading v0.8 — agentkontroll och verkliga handelsbudgetar
 
 Python kör kursbevakning och agentbedömningar utan en öppen webbläsare.
 **Vanlig start visar verkligt Kraken-konto och bekräftade affärer; simulerad handel
@@ -7,7 +7,9 @@ en separat förberedd, ägarsignerad och tidsbegränsad session; insättningar e
 serverstart aktiverar aldrig sådan handel. Manuella ägarsignerade Kraken-limitorder
 är avstängda som standard. Se [lokal Kraken-konfiguration](docs/KRAKEN-LIVE.md).
 
-Dashboarden visar Översikt, Marknad, Beslut, Agenter, Historik, System och
+Se [Agentkontroll: budget, karantän, skugghandel, vinstreserv och begränsningar](docs/AGENT-CONTROL.md).
+
+Dashboarden visar Översikt, Marknad, Beslut, Agenter, Agentkontroll, Historik, System och
 Kraken-konto. Systemtypsnitt och tabellsiffror gör datum och belopp tydliga.
 
 ## Starta på Windows med Ubuntu/WSL

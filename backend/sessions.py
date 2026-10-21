@@ -3,6 +3,7 @@
 Only verified exchange fills create agent inventory; deposits are never profits or
 new authority. One in-flight ticket globally, durable intents, no transport retries.
 """
+import copy
 import hashlib
 import json
 import os
@@ -17,10 +18,11 @@ from .live import ACTIVE,decimal,fingerprint
 from .kraken_private import ExchangeError,ExchangeUnknown
 from .market import PAIRS
 from .trade_history import history
+from .analysis import correlation
 
 AGENTS={'gamma':Decimal('.4'),'zeta':Decimal('.4'),'iota':Decimal('.2')}
-ACTIVE_SESSIONS={'RUNNING','STOPPING','PAUSED','RECOVERY'}
-PLAN_FIELDS=('id','createdAt','expiresAt','durationMinutes','capitalEUR','newCashEUR','budgets','baseline','endPolicy','maxLossEUR','maxOrderEUR')
+ACTIVE_SESSIONS={'RUNNING','WATCHING','STOPPING','PAUSED','RECOVERY'}
+PLAN_FIELDS=('id','createdAt','expiresAt','durationMinutes','capitalEUR','newCashEUR','budgets','baseline','endPolicy','maxLossEUR','maxOrderEUR','protectionMinutes','protectionExpiresAt')
 
 
 class StaleDecision(ExchangeError):
@@ -30,7 +32,7 @@ class StaleDecision(ExchangeError):
 def now():return datetime.now(timezone.utc)
 
 def digest(plan):
-    return hashlib.sha256(json.dumps({key:plan[key] for key in PLAN_FIELDS},sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    return hashlib.sha256(json.dumps({key:plan[key] for key in PLAN_FIELDS if key in plan},sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
 
 class Sessions:
@@ -95,9 +97,11 @@ class Sessions:
 
     def plan(self,data):
         if self.active():raise ExchangeError('Avsluta tidigare session först.')
-        if set(data)!={'capitalEUR','endPolicy','durationMinutes'}:raise ExchangeError('Ogiltiga planfält.')
+        if set(data)-{'capitalEUR','endPolicy','durationMinutes','protectionMinutes'} or not {'capitalEUR','endPolicy','durationMinutes'}<=set(data):raise ExchangeError('Ogiltiga planfält.')
         cap=decimal(data['capitalEUR'],True)
         if cap>100:raise ExchangeError('Pilotens totala kapitaltak är 100 EUR.')
+        protection=data.get('protectionMinutes',0)
+        if type(protection) is not int or not 0<=protection<=1440:raise ExchangeError('Bevakning efter avslut får vara högst 1440 minuter.')
         minutes=data['durationMinutes']
         if type(minutes) is not int or not 15<=minutes<=720:raise ExchangeError('Välj 15–720 minuter.')
         if data['endPolicy'] not in ('assess','hold'):raise ExchangeError('Välj CHEF-bedömning eller behåll alla.')
@@ -114,13 +118,17 @@ class Sessions:
                 qty=sum((decimal(lot['quantity']) for lot in owned if lot['pair']==pair),Decimal(0))
                 if qty>decimal(baseline[asset])+Decimal('.00000001'):raise ExchangeError('Agenternas registrerade innehav stämmer inte med Kraken. Manuell avstämning krävs.')
             if sum(carry.values())>cap:raise ExchangeError('Befintliga agentinnehav överstiger godkänt kapitaltak.')
-            cash=max(Decimal(0),min(cap-sum(carry.values()),decimal(balances['EUR']['available'])*Decimal('.99'),(equity*Decimal('.4')-invested)*Decimal('.99')))
+            self.e.governance.supervise()
+            weights=self.e.governance.weights()
+            cash=max(Decimal(0),min(cap-sum(carry.values()),max(Decimal(0),decimal(balances['EUR']['available'])-self.e.governance.reserve())*Decimal('.99'),(equity*Decimal('.4')-invested)*Decimal('.99')))
             created=now();local=created.astimezone(ZoneInfo('Europe/Stockholm'))
             midnight=(local+timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0).astimezone(timezone.utc)
             s=dict(id='SESSION-'+uuid.uuid4().hex,createdAt=created.isoformat(),expiresAt=min(created+timedelta(minutes=minutes),midnight).isoformat(),durationMinutes=minutes,
-                capitalEUR=str(cap),newCashEUR=str(cash),budgets={aid:str(carry[aid]+cash*weight) for aid,weight in AGENTS.items()},
+                capitalEUR=str(cap),newCashEUR=str(cash),budgets={aid:str(carry[aid]+cash*weight) for aid,weight in weights.items()},
                 baseline=baseline,endPolicy=data['endPolicy'],maxLossEUR=str(min(Decimal('10'),equity*Decimal('.03'))),maxOrderEUR=str(self.e.maximum),
                 initialEquityEUR=str(equity),peakEquityEUR=str(equity),status='PLANNED',allowEndSales=True,endDecisions=[],reason='Inväntar ditt godkännande.')
+            s['protectionMinutes']=protection
+            s['protectionExpiresAt']=(datetime.fromisoformat(s['expiresAt'])+timedelta(minutes=protection)).isoformat()
             s['fingerprint']=digest(s)
             return self.save(s,'PLAN')
 
@@ -140,6 +148,7 @@ class Sessions:
                 if s['status']!='PLANNED' or not 0<=(now()-datetime.fromisoformat(s['createdAt'])).total_seconds()<=300 or now()>=datetime.fromisoformat(s['expiresAt']):raise ExchangeError('Ny sessionsplan krävs.')
                 if decimal(s['newCashEUR'])<=0 and not self.owned():raise ExchangeError('Inget kapital finns för sessionen. Ingen insättning krävs för bevakning.')
                 with self.e.lock:
+                    if any(self.e.governance.agent(aid).get('riskSince','')>s['createdAt'] for aid in AGENTS):raise ExchangeError('En agent har återkvalificerats efter planen. Granska en ny budgetplan.')
                     self.e.inspect();balances,orders=self.e.account()
                     if orders or any(t['state'] in ACTIVE for t in self.e.tickets()):raise ExchangeError('Öppna eller okända order blockerar start.')
                     self.check_balances(s,balances)
@@ -157,6 +166,7 @@ class Sessions:
                 with self.store.lock:
                     s=self.get(s['id'])
                     if s['status'] in ACTIVE_SESSIONS:
+                        if s['status']=='WATCHING':s.update(protectionRevoked=True,allowEndSales=False)
                         s.setdefault('stopRequestedAt',now().isoformat())
                         s.update(status='STOPPING',reason='Nya köp stoppade. Annullering och innehavsbedömning pågår.')
                         self.save(s,'STOP_REQUESTED')
@@ -200,16 +210,23 @@ class Sessions:
             if not current or current['openOrderCount']!=0:raise ExchangeError('Färskt konto utan andra öppna order krävs.')
             self.check_balances(s,current['balances'])
             if ticket['side']=='buy':
+                if self.e.stream.enabled and not self.e.stream.healthy():raise ExchangeError('WebSocket är frånkopplad eller för gammal; nya köp spärras.')
+                if not self.e.governance.can_buy(ticket['agentId']):raise ExchangeError('Agenten är i karantän eller skugggranskning.')
                 if s['status']!='RUNNING' or now()>=datetime.fromisoformat(s['expiresAt']):raise ExchangeError('Sessionen tillåter inte nya köp.')
                 used=sum((decimal(f['costEUR'])+decimal(f['feeEUR']) for f in self.fills() if f.get('sessionId')==s['id'] and f['side']=='buy'),Decimal(0))
                 owned=sum((decimal(lot['costIncludingFeeEUR']) for lot in self.owned() if lot['agentId']==ticket['agentId']),Decimal(0))
+                entry=ticket.get('decision',{}).get('exitPlan',{})
+                distance=decimal(entry.get('lossFraction','0'))
+                if not Decimal('.02')<=distance<=Decimal('.08'):raise ExchangeError('Ordern saknar en giltig låst exitplan.')
+                if decimal(ticket['volume'])*decimal(ticket['price'])*(distance+Decimal('.01'))>decimal(s['capitalEUR'])*Decimal('.005'):raise ExchangeError('Planerad positionsrisk överskrider 0,5 % av kapitaltaket.')
                 reserve=decimal(ticket['volume'])*decimal(ticket['price'])*Decimal('1.01')
                 if used+reserve>decimal(s['newCashEUR']) or owned+reserve>decimal(s['budgets'][ticket['agentId']]):raise ExchangeError('Agent- eller sessionsbudgeten är förbrukad.')
                 m=self.e.public.metadata;rate=decimal(m['eurSek'])
                 equity=decimal(current['balances']['EUR']['balance'])+sum((decimal(current['balances'][asset]['balance'])*decimal(m['orderBooks'][symbol]['bids'][0][0])/rate for asset,symbol in [('XBT','BTC-SIM'),('ETH','ETH-SIM')]),Decimal(0))
                 if max(decimal(s['initialEquityEUR'])-equity,decimal(s['peakEquityEUR'])-equity)+reserve*Decimal('.01')>=decimal(s['maxLossEUR']):raise ExchangeError('Den verkliga förlustgränsen tillåter inte ett nytt köp.')
             else:
-                if s['status'] not in ('RUNNING','STOPPING'):raise ExchangeError('Sessionen tillåter inte försäljning.')
+                if s['status'] not in ('RUNNING','STOPPING','WATCHING'):raise ExchangeError('Sessionen tillåter inte försäljning.')
+                if s['status']=='WATCHING' and (s.get('protectionRevoked') or now()>=datetime.fromisoformat(s['protectionExpiresAt'])):raise ExchangeError('Bevakningsmandatet har upphört.')
                 if s['status']=='RUNNING' and now()>=datetime.fromisoformat(s['expiresAt']):raise ExchangeError('Sessionstiden har löpt ut; avslutsbedömning krävs.')
                 if s['status']=='STOPPING' and (not s['allowEndSales'] or s['endPolicy']!='assess' or now()>min(datetime.fromisoformat(s['stopRequestedAt']),datetime.fromisoformat(s['expiresAt']))+timedelta(minutes=15)):
                     raise ExchangeError('Avslutstillståndet tillåter bara att behålla och annullera.')
@@ -221,7 +238,7 @@ class Sessions:
     def pause(self,s,reason):
         with self.store.lock:
             current=self.get(s['id'])
-            if current['status']=='RUNNING':current.update(status='PAUSED',reason=reason);self.save(current,'RISK_PAUSE')
+            if current['status'] in ('RUNNING','WATCHING'):current.update(status='PAUSED',reason=reason);self.save(current,'RISK_PAUSE')
         return self.get(s['id'])
 
     def shutdown(self):
@@ -237,8 +254,12 @@ class Sessions:
             self.store.db.execute('INSERT INTO session_intents VALUES(?,?,NULL,?)',(intent,s['id'],'PREPARING'))
         params=dict(pair=pair,side=side,volume=str(volume),price=str(price))
         risk=self.e.preflight(params)
+        if decimal(risk.get('executableVolume',volume))<volume:raise ExchangeError('Orderdjupet täcker inte sessionsordern vid valt limitpris.')
         ticket=dict(id='LIVE-'+uuid.uuid4().hex,**params,clientId='J'+uuid.uuid4().hex[:17],createdAt=now().isoformat(),
             state='PREVIEW',risk=risk,stopGeneration=self.store.state.get('stopGeneration',0),sessionId=s['id'],agentId=aid,intentId=intent,signalBar=bar)
+        symbol=next(k for k,v in PAIRS.items() if v==pair)
+        analysis=self.store.state.get('marketAnalysis',{}).get(symbol,{})
+        ticket['decision']=copy.deepcopy(dict(version='rules-v1',at=now().isoformat(),analysis=analysis,report=self.store.state.get('agentReports',{}).get(aid+'|'+symbol,{}),chef=self.store.state.get('chefSignals',{}).get(symbol,{}),exitPlan=self.e.governance.exit_plan(analysis)))
         ticket['fingerprint']=fingerprint(ticket)
         self.e.save(ticket,'SESSION_PREVIEW')
         with self.store.lock,self.store.db:self.store.db.execute('UPDATE session_intents SET ticket=?,status=? WHERE id=?',(ticket['id'],'PREVIEW',intent))
@@ -264,11 +285,15 @@ class Sessions:
             with self.e.lock:
                 s=self.active()
                 if not s:return
-                if s['status']=='RUNNING' and not self.status()['enabled']:
+                if s['status'] in ('RUNNING','WATCHING') and not self.status()['enabled']:
                     s=self.pause(s,'Automatisk handel stängdes av. Ingen automatisk återstart.')
+                if s['status']=='WATCHING' and now()>=datetime.fromisoformat(s['protectionExpiresAt']):
+                    s['protectionRevoked']=True;self.save(s,'PROTECTION_EXPIRED')
+                    s=self.run('stop',dict(session=s['id']),'protection-expiry:'+s['id'])
                 if s['status']=='RUNNING' and now()>=datetime.fromisoformat(s['expiresAt']):
                     s=self.run('stop',dict(session=s['id']),'expiry:'+s['id'])
                 self.e.inspect();s=self.get(s['id'])
+                self.e.governance.supervise(s['budgets'])
                 active=[t for t in self.e.tickets() if t['state'] in ACTIVE]
                 if s['status'] in ('STOPPING','PAUSED','RECOVERY'):
                     for t in active:
@@ -277,6 +302,9 @@ class Sessions:
                     if active:return
                     if s['status'] in ('PAUSED','RECOVERY'):return
                 elif active:
+                    for t in active:
+                        if t.get('sessionId')==s['id'] and t.get('side')=='buy' and not self.e.governance.can_buy(t.get('agentId')) and t.get('exchangeOrderId') and t['state'] not in ('CANCEL_REQUESTED','UNKNOWN'):
+                            self.e.mutate(t,'cancel',None,'quarantine-cancel:'+t['id'],session_authorizer=self.authorize)
                     if any(t['state']=='UNKNOWN' or t.get('sessionId')!=s['id'] for t in active):self.pause(s,'Okänd eller extern order. Nya köp pausade; manuell avstämning krävs.')
                     return
                 if any(t.get('historyError') for t in self.e.tickets()):
@@ -309,7 +337,7 @@ class Sessions:
                         qty=sum((decimal(l['quantity']) for l in lots),Decimal(0));basis=sum((decimal(l['costIncludingFeeEUR']) for l in lots),Decimal(0))
                         chef=self.store.state.get('chefSignals',{}).get(symbol,{})
                         report=self.store.state.get('agentReports',{}).get(aid+'|'+symbol,{})
-                        loss_exit=qty>0 and fresh and qty*bids[pair]<basis*Decimal('.95')
+                        loss_exit=qty>0 and fresh and qty*bids[pair]<basis*(1-self.e.governance.stop_fraction(aid,pair))
                         sell=qty>0 and fresh and (chef.get('side')=='SELL' or loss_exit)
                         if s['status']=='STOPPING':
                             sell=sell and s['endPolicy']=='assess' and s['allowEndSales']
@@ -320,24 +348,33 @@ class Sessions:
                             elif s['endPolicy']=='hold':reason='Behåll: du valde att behålla alla innehav vid avslut.'
                             elif not s['allowEndSales']:reason='Behåll: återställningsläge saknar mandat för nya försäljningar.'
                             elif tried:reason='Behåll återstående del: ett begränsat exitförsök har redan gjorts; inga automatiska omsändningar.'
-                            elif loss_exit:reason='Sälj: positionsvärdet ligger minst 5 % under verifierad kostnadsbas.'
+                            elif loss_exit:reason='Sälj: positionsvärdet ligger under den låsta riskgränsen.'
                             elif sell:reason='Sälj: minst två olika strategier ger färsk säljsignal utan motsatt signal.'
-                            else:reason='Behåll: varken gemensam säljsignal eller 5 % positionsförlust. Ingen garanti att fortsatt innehav blir lönsamt.'
+                            else:reason='Behåll: varken gemensam säljsignal eller utlöst positionsgräns. Ingen garanti att fortsatt innehav blir lönsamt.'
                             if qty:decisions.append(dict(agentId=aid,pair=pair,quantity=str(qty),decision='SELL_PENDING' if sell else 'HOLD',
                                 reason=reason,at=now().isoformat()))
                             if sell:candidates.append((aid,symbol,pair,'sell',qty,intent))
-                        elif s['status']=='RUNNING' and fresh:
+                        elif s['status'] in ('RUNNING','WATCHING') and fresh:
                             side='sell' if sell and (loss_exit or report.get('side')=='SELL') else 'buy' if chef.get('side')=='BUY' and report.get('side')=='BUY' else None
+                            if side=='buy' and s['status']=='WATCHING':side=None
+                            if side=='buy' and self.e.stream.enabled and not self.e.stream.healthy():side=None
+                            if side=='buy' and not self.e.governance.allow_idea(aid,pair,analysis['barId'],side):side=None
                             if side:
                                 intent=s['id']+'|'+aid+'|'+pair+'|'+str(analysis['barId'])+'|'+side
                                 candidates.append((aid,symbol,pair,side,qty,intent))
                 if s['status']=='STOPPING':
                     s['endDecisions']=decisions
                     if not candidates:
+                        if owned and s.get('allowEndSales') and s.get('protectionMinutes',0)>0 and not s.get('protectionRevoked') and now()<datetime.fromisoformat(s['protectionExpiresAt']):
+                            s.update(status='WATCHING',reason='Nya köp stoppade. Godkänd lokal bevakning kan sälja befintliga agentinnehav fram till '+s['protectionExpiresAt'])
+                            self.save(s,'PROTECTION_STARTED');return
                         s.update(status='STOPPED_HOLDINGS' if owned else 'STOPPED',reason='Trading avslutad. Inga nya order tillåts. Kvarvarande innehav ligger kvar på Kraken.')
                         self.save(s,'STOPPED');return
                     self.save(s,'END_REVIEW')
-                candidates.sort(key=lambda item:item[3]!='sell')
+                if s['status']=='WATCHING' and not owned:
+                    s.update(status='STOPPED',reason='Bevakning klar; inga agentinnehav kvar.');self.save(s,'PROTECTION_COMPLETE');return
+                used_by_agent={aid:sum((decimal(f['costEUR'])+decimal(f['feeEUR']) for f in self.fills() if f.get('sessionId')==s['id'] and f.get('agentId')==aid and f['side']=='buy'),Decimal(0)) for aid in AGENTS}
+                candidates.sort(key=lambda item:(item[3]!='sell',used_by_agent[item[0]]/max(Decimal('.01'),decimal(s['budgets'][item[0]]))))
                 for aid,symbol,pair,side,qty,intent in candidates:
                     with self.store.lock:
                         if self.store.db.execute('SELECT 1 FROM session_intents WHERE id=?',(intent,)).fetchone():continue
@@ -349,6 +386,13 @@ class Sessions:
                         used=sum((decimal(f['costEUR'])+decimal(f['feeEUR']) for f in self.fills() if f.get('sessionId')==s['id'] and f['side']=='buy'),Decimal(0))
                         basis=sum((decimal(l['costIncludingFeeEUR']) for l in owned if l['agentId']==aid),Decimal(0))
                         money=max(Decimal(0),min(decimal(s['newCashEUR'])-used,decimal(s['budgets'][aid])-basis,decimal(s['maxOrderEUR'])))
+                        exit_plan=self.e.governance.exit_plan(self.store.state['marketAnalysis'][symbol])
+                        # Bound worst planned entry risk to 0.5% of approved capital.
+                        risk_money=decimal(s['capitalEUR'])*Decimal('.005')/(decimal(exit_plan['lossFraction'])+Decimal('.01'))
+                        money=min(money,risk_money)
+                        other='ETH-SIM' if symbol=='BTC-SIM' else 'BTC-SIM'
+                        if any(l['pair']!=pair for l in owned) and correlation(self.store.state['marketAnalysis'][symbol],self.store.state['marketAnalysis'].get(other,{}))>=.7:
+                            money*=Decimal('.5')
                         qty=money/(price*Decimal('1.01'))
                     qty=min(qty,decimal(s['maxOrderEUR'])/price)
                     qty=(qty/qstep).to_integral_value(rounding=ROUND_DOWN)*qstep

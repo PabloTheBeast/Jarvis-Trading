@@ -1,4 +1,7 @@
-# Godkända agentsessioner på Kraken — v0.7
+# Godkända agentsessioner på Kraken — v0.8
+
+Se även [Agentkontroll](AGENT-CONTROL.md) för nya budgetvikter, exitplaner, karantän,
+vinstreserv och valbar efterbevakning. Dessa livekontroller kompletterar reglerna nedan.
 
 Sessioner gäller bara BTC/EUR och ETH/EUR. Svenska aktier är inte anslutna. Kodens
 privata börsflöden har testats med simulerad börs; finansierad exekvering och faktiska
@@ -70,7 +73,7 @@ kan inte aktiveras tillsammans via normal Runtime-konfiguration.
 - Sessionsförlust/drawdown från verkligt initialt/peak-kontovärde pausar köp vid
   min(3 % av startvärdet, 10 EUR). Gränsen är ett stopputlösande villkor, ingen
   garanterad maximal faktisk förlust. Marknadsgap och behållna innehav kan ge mer.
-- Fem procents positionsförlust kan ge en säljorder för ett ägt agentinnehav även
+- En låst, volatilitetsanpassad positionsgräns (2–8 %, äldre innehav 5 %) kan ge en säljorder för ett ägt agentinnehav även
   utan en matchande strategisignal. Ingen okänd/manuell position säljs av agenten.
 - Köp kräver färska slutna femminuterssignaler och CHEF:s konsensus. Intents är
   beständiga per session, agent, par, stapel och riktning. Samma beslut skickas inte igen.
@@ -89,7 +92,7 @@ Om du avbryter medan startkontrollen pågår kan planen också återkallas.
 
 - **Behåll alla:** inga nya säljorder; verifierade agentinnehav ligger kvar.
 - **CHEF bedömer:** för varje verifierat agentinnehav: sälj vid färsk gemensam
-  säljsignal eller 5 % positionsförlust; behåll annars. Aktuella kurser måste finnas.
+  säljsignal eller utlöst låst positionsgräns; behåll annars. Aktuella kurser måste finnas.
   Detta är regelbaserad bedömning, inte en prognos att det blir lönsamt att hålla.
 - Avslut får skicka begränsade säljorder under högst 15 minuter från avslutsbegäran,
   och aldrig senare än 15 minuter efter planerad sluttid. Därefter behålls resten.
@@ -97,7 +100,7 @@ Om du avbryter medan startkontrollen pågår kan planen också återkallas.
   En exit-avsikt skickas en gång per agent/par. Vid större position än ordertaket
   kan återstående del behållas. Slutvyn visar HOLD/SELL_PENDING med orsak.
 - STOPPED betyder inga kvarvarande agentinnehav; STOPPED_HOLDINGS betyder att de
-  ligger kvar. Innehav bevakas inte aktivt av handelssessionen efter slutstatus.
+  ligger kvar. Valbar signerad efterbevakning ger WATCHING innan slutstatus. Innehav bevakas inte aktivt av handelssessionen efter terminal slutstatus.
   Allmän kursbevakning fortsätter, men inga stop-loss-/säljorder skapas då.
 - Nätverksfel, okända order och ofullständig historik kan göra att avslutet inte
   kan bekräftas. Status får då inte påstå att allt är klart. Kontrollera Kraken

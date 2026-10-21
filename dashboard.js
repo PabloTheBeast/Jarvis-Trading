@@ -3,7 +3,7 @@
 const $ = id => document.getElementById(id);
 const app = {state:null, agents:[], assets:[], revision:-1, connected:false,
   received:0, serverTime:0, tab:'overview', pending:0, polling:false, exchange:null, ticket:null, notices:null,desktopAlerts:false,paperMode:false,trading:null};
-const tabs = ['overview','market','decisions','agents','portfolio','risk','history','system','exchange'];
+const tabs = ['overview','market','decisions','agents','portfolio','risk','history','system','exchange','supervision'];
 const sek = new Intl.NumberFormat('sv-SE',{style:'currency',currency:'SEK',maximumFractionDigits:2});
 const eur = new Intl.NumberFormat('sv-SE',{style:'currency',currency:'EUR',maximumFractionDigits:2});
 const numbers = new Intl.NumberFormat('sv-SE',{maximumFractionDigits:8});
@@ -348,7 +348,7 @@ async function refreshTrading(){
   try{
     const result=await getJSON('/api/trading-session'),old=app.trading?.session,next=result.session;
     if(old&&next&&Date.parse(next.updatedAt)<Date.parse(old.updatedAt))return;
-    app.trading=result;renderTrading();
+    app.trading=result;renderTrading();refreshSupervision();
   }catch(error){
     if(app.trading){app.trading.enabled=false;renderTrading();}
     text('session-message','Sessionsstatus kan inte hämtas. En redan startad session kan köra vidare. Kontrollera servern och Kraken; inga nya startkommandon skickas automatiskt.');
@@ -356,23 +356,23 @@ async function refreshTrading(){
 }
 function renderTrading(){
   const t=app.trading,s=t?.session;
-  const labels={PLANNED:'Inväntar godkännande',RUNNING:'Trading pågår',STOPPING:'Avslutar · order kan pågå',PAUSED:'Riskpaus',RECOVERY:'Omstart · manuell avstämning',STOPPED:'Trading avslutad',STOPPED_HOLDINGS:'Avslutad · innehav behållna',CANCELLED:'Plan avbruten'};
+  const labels={PLANNED:'Inväntar godkännande',RUNNING:'Trading pågår',WATCHING:'Efterbevakning · inga nya köp',STOPPING:'Avslutar · order kan pågå',PAUSED:'Riskpaus',RECOVERY:'Omstart · manuell avstämning',STOPPED:'Trading avslutad',STOPPED_HOLDINGS:'Avslutad · innehav behållna',CANCELLED:'Plan avbruten'};
   text('session-state',s?labels[s.status]||s.status:'Bevakning');
   $('session-state').className='badge '+(s?.status==='RUNNING'?'warn':['PAUSED','RECOVERY'].includes(s?.status)?'bad':'');
   text('session-message',s?.reason||'Ingen session är startad. Insättningar aktiverar aldrig handel.');
-  const active=['RUNNING','STOPPING','PAUSED','RECOVERY'].includes(s?.status);
+  const active=['RUNNING','WATCHING','STOPPING','PAUSED','RECOVERY'].includes(s?.status);
   const locked=active||s?.status==='PLANNED';
-  for(const id of ['session-capital','session-duration','session-policy'])$(id).disabled=locked;
-  if(locked){$('session-capital').value=s.capitalEUR;$('session-duration').value=String(s.durationMinutes);$('session-policy').value=s.endPolicy;}
+  for(const id of ['session-capital','session-duration','session-policy','session-protection'])$(id).disabled=locked;
+  if(locked){$('session-capital').value=s.capitalEUR;$('session-duration').value=String(s.durationMinutes);$('session-policy').value=s.endPolicy;$('session-protection').value=String(s.protectionMinutes||0);}
   $('session-plan').disabled=app.pending>0||locked;
   $('session-start').disabled=app.pending>0||!t?.enabled||s?.status!=='PLANNED'||!Object.values(s?.budgets||{}).some(value=>Number(value)>0);
-  text('session-stop',s?.status==='PLANNED'?'Avbryt plan':'Avsluta trading');
-  $('session-stop').disabled=!s||!['PLANNED','RUNNING','STOPPING','PAUSED','RECOVERY'].includes(s.status);
+  text('session-stop',s?.status==='PLANNED'?'Avbryt plan':s?.status==='WATCHING'?'Avsluta bevakning':'Avsluta trading');
+  $('session-stop').disabled=!s||!['PLANNED','RUNNING','WATCHING','STOPPING','PAUSED','RECOVERY'].includes(s.status);
   if(!s){text('session-plan-details','Förbered en budgetplan för att se CHEF:s fördelning. Nollsaldo går att granska men kan inte starta trading.');$('session-end-decisions').replaceChildren();return;}
   const details=node('dl',{class:'facts'});
   details.append(...[['Kapitaltak',euro(s.capitalEUR)],['Godkända nya köp totalt, inklusive avgifter',euro(s.newCashEUR)],['Verkliga köp inkl. avgifter hittills',euro(t.grossBuysEUR)],['Återstående mandat för nya köp',euro(t.remainingNewBuysEUR)],
     ...Object.entries(s.budgets).map(([agent,value])=>[agent.toUpperCase()+' · intern budget',euro(value)]),
-    ['Förlust-/drawdowngräns',euro(s.maxLossEUR)],['Ordertak',euro(s.maxOrderEUR)],['Slut senast',tradeTime(s.expiresAt)],
+    ['Förlust-/drawdowngräns',euro(s.maxLossEUR)],['Ordertak',euro(s.maxOrderEUR)],['Slut senast',tradeTime(s.expiresAt)],['Lokal efterbevakning',s.protectionMinutes?'Till '+tradeTime(s.protectionExpiresAt)+' · får sälja, aldrig köpa':'Ingen'],
     ['Avslutspolicy',s.endPolicy==='assess'?'CHEF säljer vid säljsignal/stop-loss, behåller annars':'Behåll alla innehav'],['Sessions-ID',s.id]]
     .map(([label,value])=>node('div',{},[node('dt',{text:label}),node('dd',{class:'mono',text:value})])));
   $('session-plan-details').replaceChildren(details,node('p',{class:'caption',text:t.enabled?'För start: python3 -m backend.ops approve session-start --session '+s.id:
@@ -381,12 +381,12 @@ function renderTrading(){
 }
 async function sessionAction(action){
   const s=app.trading?.session;let data,approval=null;
-  if(action==='plan')data={capitalEUR:$('session-capital').value.trim().replace(',','.'),endPolicy:$('session-policy').value,durationMinutes:Number($('session-duration').value)};
+  if(action==='plan')data={capitalEUR:$('session-capital').value.trim().replace(',','.'),endPolicy:$('session-policy').value,durationMinutes:Number($('session-duration').value),protectionMinutes:Number($('session-protection').value)};
   else{
     if(!s)return;
     data={session:s.id};
     if(action==='start'){
-      if(!confirm('Tillåt automatisk köp-/säljhandel på Kraken inom planen? Nya köp högst '+euro(s.newCashEUR)+', förlustgräns '+euro(s.maxLossEUR)+', slut senast '+tradeTime(s.expiresAt)+'. Avslutspolicy: '+s.endPolicy+'. Detta använder riktiga pengar.'))return;
+      if(!confirm('Tillåt automatisk köp-/säljhandel på Kraken inom planen? Nya köp högst '+euro(s.newCashEUR)+', förlustgräns '+euro(s.maxLossEUR)+', slut senast '+tradeTime(s.expiresAt)+'. Efterbevakning: '+(s.protectionMinutes?'får sälja till '+tradeTime(s.protectionExpiresAt):'ingen')+'. Avslutspolicy: '+s.endPolicy+'. Detta använder riktiga pengar.'))return;
       approval=prompt('Skapa en engångskod i Ubuntu:\npython3 -m backend.ops approve session-start --session '+s.id+'\nKontrollera planen i terminalen och klistra in koden (120 sekunder).');
       if(!approval)return;
     }
@@ -521,3 +521,44 @@ for(const action of ['validate','submit','reconcile','cancel'])$('live-'+action)
 poll();refreshExchange();refreshTrading();
 setInterval(poll,2000);
 setInterval(()=>{renderHealth();if(app.state&&['overview','decisions'].includes(app.tab))renderDecisions();},1000);
+
+async function refreshSupervision(){
+  try{
+    const s=await getJSON('/api/supervision');
+    text('supervision-message','Livekontroll · uppdaterad '+new Date().toLocaleTimeString('sv-SE'));
+    const stream=s.market.stream;
+    $('supervision-summary').replaceChildren(...[
+      ['Skyddad EUR-reserv',euro(s.savings.reservedEUR)],
+      ['Vinsttröskel',euro(s.savings.highWaterEUR)],
+      ['Marknadsström',stream.enabled?(stream.healthy?'WebSocket · aktuell':'WebSocket · ej aktuell'):'REST · 15 sekunder'],
+      ['Signaler',s.market.signals]
+    ].map(([label,value])=>node('article',{class:'metric'},[node('span',{text:label}),node('strong',{text:value})])));
+    const labels={ACTIVE:'Aktiv pilot',LIMITED:'Begränsad provbudget',QUARANTINE:'Karantän',SHADOW:'Skugghandel',REVIEW_READY:'Redo för ägargranskning'};
+    $('supervision-agents').replaceChildren(...s.agents.map(a=>{
+      const m=a.metrics,q=a.shadow;
+      const card=node('article',{class:'panel'},[node('h3',{text:a.agentId.toUpperCase()}),badge(labels[a.status]||a.status,a.status==='ACTIVE'?'good':'warn'),node('p',{text:a.reason}),
+        node('p',{text:'Realiserat netto: '+euro(m.netEUR)+' · nedgång: '+euro(m.drawdownEUR)+' · avslut: '+m.closedTrades}),
+        node('p',{text:'Kostnadsbas öppna innehav: '+euro(m.openCostEUR)+' · orealiserat: '+euro(m.unrealizedEUR)+' · avgifter: '+euro(m.feesEUR)}),
+        node('p',{text:'Snittvinst: '+euro(m.averageWinEUR)+' · snittförlust: '+euro(m.averageLossEUR)}),
+        node('p',{text:q?'SKUGGRESULTAT: '+euro(q.netEUR||0)+' · '+q.trades.length+' avslut · nedgång '+euro(q.maxDrawdownEUR):'Inget separat skuggprov pågår.'})]);
+      if(['ACTIVE','LIMITED'].includes(a.status))card.append(node('button',{type:'button',text:'Sätt i karantän',click:async()=>{
+        const reason=prompt('Varför ska '+a.agentId+' stoppas från nya köp? Befintliga innehav ligger kvar.');if(!reason)return;
+        try{await post('/api/supervision/quarantine',{agent:a.agentId,reason});refreshSupervision();}catch(e){showError(e.message);}
+      }}));
+      if(a.status==='REVIEW_READY')card.append(node('p',{text:'Granska rapporten och kör lokalt: python3 -m backend.ops approve agent-review --agent '+a.agentId}),node('button',{type:'button',text:'Godkänn begränsad återstart',click:async()=>{
+        const approval=prompt('Ange lokal engångskod för agentgranskningen:');if(!approval)return;
+        try{await post('/api/supervision/review',{agent:a.agentId},approval);refreshSupervision();}catch(e){showError(e.message);}
+      }}));
+      return card;
+    }));
+    $('weekly-reviews').replaceChildren(...(s.weeklyReports.length?s.weeklyReports.map(r=>node('details',{},[node('summary',{text:'Period '+r.period+' · netto '+euro(r.netEUR)+' · reserverat '+euro(r.reservedEUR)}),node('p',{text:r.conclusion}),...(r.trades||[]).map(t=>node('p',{text:(t.agentId||'Manuell')+' · '+t.pair+' · '+tradeTime(t.soldAt)+' · '+euro(t.netEUR)+' · '+t.finding+' Köp: '+t.entryReason+' Sälj: '+t.exitReason}))])):[node('p',{text:'Första granskningen sker efter sju dagar. Ingen avkastning eller historik är påhittad.'})]));
+    $('research-ideas').replaceChildren(...(s.research.length?s.research.map(r=>node('article',{class:'status-card'},[badge(r.status==='BACKTEST_REVIEW'?'Historiskt test · inväntar granskning':'Ej verifierad','warn'),node('h4',{text:r.title}),node('a',{href:r.url,target:'_blank',rel:'noopener noreferrer',text:'Öppna källa'}),node('p',{text:r.hypothesis}),node('p',{text:r.evaluation?'Separat testperiod: '+euro(r.evaluation.holdout.netEUR)+' · '+r.evaluation.holdout.closedTrades+' avslut · nedgång '+euro(r.evaluation.holdout.maxDrawdownEUR):'Testkommando: python3 -m backend.ops research-test historik.json --strategy Trend --idea '+r.id}),node('p',{text:r.nextStep})])):[node('p',{text:'Inga inskickade strategiidéer.'})]));
+    $('supervision-limitations').replaceChildren(...s.limitations.map(item=>node('p',{text:item})));
+  }catch(e){text('supervision-message','Kontrollstatus saknas: '+e.message);}
+}
+$('refresh-supervision').onclick=refreshSupervision;
+$('research-form').onsubmit=async event=>{
+  event.preventDefault();
+  try{await post('/api/supervision/research',Object.fromEntries(new FormData(event.target)));event.target.reset();await refreshSupervision();}catch(e){showError(e.message);}
+};
+refreshSupervision();

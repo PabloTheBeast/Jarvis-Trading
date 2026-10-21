@@ -33,3 +33,14 @@ body:not(.paper-mode) .paper-ui{display:none!important}body.paper-mode .real-ui{
 @media(max-width:760px){.app-header{flex-wrap:wrap;gap:12px}.header-status{min-width:0;max-width:100%}.header-status .badge{white-space:normal}}
 
 .form-grid label,.form-grid select{min-width:0}
+
+/* Live supervision uses the same simple type scale as the rest of the dashboard. */
+#supervision-agents{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:1rem;margin:1rem 0}
+#supervision-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin:1rem 0}
+#supervision-summary .metric{padding:1rem;border:1px solid var(--border,#30445a);border-radius:12px;display:grid;gap:.5rem}
+#research-form .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:1rem;margin-bottom:1rem}
+#research-form label{display:grid;gap:.4rem}
+#research-form textarea{font:inherit;color:inherit;background:#172537;border:1px solid #30445a;border-radius:8px;padding:.75rem;min-height:90px;resize:vertical}
+#supervision-limitations p{border-left:3px solid #e4b667;padding-left:.8rem}
+#research-form .form-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+@media(max-width:760px){#research-form .form-grid{grid-template-columns:1fr}}

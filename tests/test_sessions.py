@@ -102,7 +102,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.store.state['tick'],0)
         if 'ORDER-2' in self.private.orders:self.private.settle('ORDER-2')
         self.s.tick();self.s.tick()
-        self.assertEqual(len(self.sends()),2) # Gamma + Iota, no duplicate per bar.
+        self.assertEqual(len(self.sends()),1) # Shared pair/bar idea: Iota cannot duplicate Gamma's buy.
 
     def test_stop_revokes_buy_before_network_preflight_finishes(self):
         p=self.start();original=self.e.preflight
