@@ -40,7 +40,7 @@ def decimal(value,positive=False):
 
 def fingerprint(ticket):
     fields={key:ticket[key] for key in ('id','pair','side','volume','price','clientId','stopGeneration')}
-    for key in ('sessionId','agentId','intentId','signalBar'):
+    for key in ('sessionId','agentId','intentId','signalBar','decision'):
         if key in ticket:fields[key]=ticket[key]
     return hashlib.sha256(json.dumps(fields,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
@@ -84,6 +84,11 @@ class LiveService:
                 if ticket['state'] in ('SENDING','CANCEL_REQUESTED'):
                     ticket['state']='UNKNOWN'
                     self.save(ticket,'RECOVERED_UNKNOWN')
+        from .governance import Governance
+        self.governance=Governance(self)
+        from .stream import MarketStream,ExecutionStream
+        self.stream=MarketStream()
+        self.execution_stream=ExecutionStream(self.private)
         from .sessions import Sessions
         self.sessions=Sessions(self)
 
@@ -238,6 +243,14 @@ class LiveService:
         ask=decimal(data['orderBooks'][symbol]['asks'][0][0],True)/rate
         if ask/bid-1>Decimal('.01') or abs(price-(ask+bid)/2)/((ask+bid)/2)>Decimal('.02'):
             raise ExchangeError('Spread över 1 % eller limitpris mer än 2 % från mittkursen.')
+        # Estimate executable depth without assuming a limit order will fill.
+        levels=data['orderBooks'][symbol]['asks' if parameters['side']=='buy' else 'bids']
+        remaining=volume;depth_cost=Decimal(0)
+        for level in levels:
+            level_price=decimal(level[0],True)/rate;level_qty=decimal(level[1],True)
+            if parameters['side']=='buy' and level_price>price or parameters['side']=='sell' and level_price<price:break
+            take=min(remaining,level_qty);depth_cost+=take*level_price;remaining-=take
+            if remaining==0:break
         try:
             balances,open_orders=self.account()
         except ExchangeUnknown:
@@ -262,6 +275,7 @@ class LiveService:
         invested=decimal(balances['XBT']['balance'])*bids['BTC-SIM']+decimal(balances['ETH']['balance'])*bids['ETH-SIM']
         base=rule['base']
         if parameters['side']=='buy':
+            self.governance.check_cash(balances['EUR']['available'],notional*Decimal('1.01'))
             # 1% fee reserve; no margin, no balance borrowed from the paper ledger.
             if notional*Decimal('1.01')>decimal(balances['EUR']['available']):
                 raise ExchangeError('Otillräckligt tillgängligt EUR-saldo inklusive avgiftsreserv.')
@@ -273,7 +287,7 @@ class LiveService:
                 raise ExchangeError('Instrumentexponering skulle överstiga 25 %.')
         elif volume>decimal(balances[base]['available']):
             raise ExchangeError('Otillräckligt tillgängligt innehav. Blankning tillåts inte.')
-        return dict(notionalEUR=str(notional),feeReserveEUR=str(notional*Decimal('.01')),
+        return dict(executableVolume=str(volume-remaining),estimatedAverageEUR=str(depth_cost/(volume-remaining)) if volume>remaining else None,notionalEUR=str(notional),feeReserveEUR=str(notional*Decimal('.01')),
                     equityEUR=str(equity),checkedAt=datetime.now(timezone.utc).isoformat(),pairRules=rule)
 
     def run(self,action,data,key,approval=None):

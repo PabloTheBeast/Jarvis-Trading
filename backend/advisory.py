@@ -32,7 +32,7 @@ def review(engine):
             if symbol not in agent['ids']:continue
             strategy=agent['strategy']
             side=(analysis.get('signals',{}).get(strategy) or 'WAIT') if ready else 'WAIT'
-            eligible=getattr(engine,'real_monitoring',False) or not s['agentHalt'].get(agent['id']) and s['agentStatus'].get(agent['id'])!='KARANTÄN'
+            eligible=(s.get('liveAgentEligibility',{}).get(agent['id'],True) if getattr(engine,'real_monitoring',False) else not s['agentHalt'].get(agent['id']) and s['agentStatus'].get(agent['id'])!='KARANTÄN')
             if eligible and side in votes:votes[side].add(strategy)
             reports[agent['id']+'|'+symbol]=dict(agent=agent['name'],agentId=agent['id'],instrument=symbol,
                 strategy=strategy,side=side,eligible=eligible,status='reading' if ready else 'waiting',

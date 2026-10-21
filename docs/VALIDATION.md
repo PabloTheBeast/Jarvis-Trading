@@ -1,3 +1,38 @@
+# Verifiering av JARVIS v0.8
+
+Utförd 2026-10-21 UTC (22 oktober i Stockholm), Python 3.12 och Chromium.
+
+- **157 enhets-/API-tester passerar.** De 130 tidigare testerna är kvar; regressionen
+  för två köp på samma par/stapel har uppdaterats till den nya gemensamma spärren.
+- Nya tester verifierar realiserad vinstreserv, förluståterhämtning, otillräckliga
+  kontanter, okänd kostnadsbas, manuell köpväg genom reservspärren, karantän före
+  order, annullering av öppet agentköp, exakt ägarsignerad återkvalificering,
+  WebSocket-färskhet och köpblockering, manipulerad exitplan, efterbevakningens
+  säljbehörighet, stopp och omstart, isolerat historiktest samt HTTP-skydd/export.
+- Separata skuggtester täcker nästa observations avslut, delavslut, utgångna
+  limitorder, kvarvarande innehav, avgifter/prisglidning och minbelopp.
+- Fem Chromium-skript passerar: browser_smoke.py, browser_advisory.py,
+  browser_trade_history.py, browser_sessions.py och browser_governance.py.
+  De kontrollerar bland annat plan/start/stopp, lokal ägarkod, riktig historikvy,
+  separat agentkontroll, säker visning av opålitlig text och mobilbredd.
+- JavaScript-syntax, Python-kompilering och git diff --check passerar.
+- **Alla privata saldon, order och avslut är simulerade i testerna.** Ingen
+  finansierad order har skickats. Tester bevisar varken lönsamhet, faktisk
+  exekveringskvalitet eller långvarig produktionsdrift.
+- Utvecklingsservern startades lokalt med LIVE=0, AUTO_TRADING=0 och MONITOR_ONLY=1.
+  Verklig publik REST-data från Kraken fungerade. WebSocket-anslutningen blockerades
+  av molnmiljöns proxy (HTTP 403); ingen fungerande extern WebSocket-anslutning eller
+  privat ström med verkliga API-behörigheter är därmed verifierad här.
+- Research stöder isolerade strategiidéer och deterministiskt test av befintliga
+  regler på importerad historik. Automatisk webb-/YouTube-inhämtning, autonoma nya
+  strategier, svenska aktier och börslagrade skyddsorder är inte implementerade.
+
+Se [funktioner och begränsningar](AGENT-CONTROL.md).
+
+---
+
+## Tidigare verifiering av v0.7
+
 # Verifiering av JARVIS v0.7
 
 Utförd 2026-10-21 i molnmiljön med Python 3.12.14, Node 24.19.0 och systemets Chromium.

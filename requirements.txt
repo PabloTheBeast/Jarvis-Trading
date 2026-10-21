@@ -1,0 +1,2 @@
+# Optional live ticker/trade streaming. REST monitoring remains stdlib-only.
+websockets>=15.0.1,<17

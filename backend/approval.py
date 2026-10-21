@@ -37,7 +37,7 @@ def encode(payload):
 
 
 def issue(key, action, amount=None, lifetime=120, now=None, subject=None):
-    if action not in ('release', 'approve', 'live-order', 'live-cancel','session-start'):
+    if action not in ('release', 'approve', 'live-order', 'live-cancel','session-start','agent-review'):
         raise ApprovalError('Unsupported approval action')
     now = int(time.time() if now is None else now)
     payload = dict(action=action, actor=getpass.getuser(), nonce=secrets.token_hex(16),
@@ -46,7 +46,7 @@ def issue(key, action, amount=None, lifetime=120, now=None, subject=None):
         if amount is None or units(amount) <= 0:
             raise ApprovalError('A positive release amount is required')
         payload['amountNanoSek'] = units(amount)
-    if action in ('live-order','live-cancel','session-start'):
+    if action in ('live-order','live-cancel','session-start','agent-review'):
         if not isinstance(subject,str) or not subject:
             raise ApprovalError('A ticket fingerprint is required')
         payload['subject']=subject
@@ -69,7 +69,7 @@ def verify(key, token, action, amount=None, now=None, subject=None):
             raise ApprovalError('Invalid approval scope')
         if action == 'release' and payload.get('amountNanoSek') != units(amount):
             raise ApprovalError('Approval amount mismatch')
-        if action in ('live-order','live-cancel','session-start') and payload.get('subject')!=subject:
+        if action in ('live-order','live-cancel','session-start','agent-review') and payload.get('subject')!=subject:
             raise ApprovalError('Approval ticket mismatch')
         return payload
     except ApprovalError:

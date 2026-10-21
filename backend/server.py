@@ -159,13 +159,19 @@ class Runtime:
         if not self.quit.is_set():
             def observe(engine):
                 engine.real_monitoring=not self.paper_enabled
+                if not self.paper_enabled:
+                    engine.s['liveAgentEligibility']={aid:self.exchange.governance.can_buy(aid) for aid in ('gamma','zeta','iota')}
                 engine.observe(prices,metadata)
             self.store.change('market-observation',observe)
+            if not self.paper_enabled:
+                self.exchange.governance.shadow_tick(self.store.snapshot()['state'],metadata)
 
     def monitor_loop(self):
         market_due=account_due=0
         while not self.quit.is_set():
             now=time.monotonic()
+            if self.exchange.execution_stream.changed.is_set():
+                self.exchange.execution_stream.changed.clear();account_due=0
             if now>=market_due:
                 try:
                     self.monitor_market()
@@ -177,6 +183,8 @@ class Runtime:
             if not self.quit.is_set() and now>=account_due:
                 try:
                     self.exchange.inspect()
+                    if not self.paper_enabled and self.exchange.last_account:
+                        self.exchange.governance.weekly(self.exchange.last_account['balances']['EUR']['available'])
                 except (ExchangeError,ExchangeUnknown):
                     logging.warning('Read-only Kraken account refresh failed; inspect account status')
                 except Exception:
@@ -279,6 +287,8 @@ class Runtime:
             deadline = time.monotonic()+snap['autoPace']/1000
 
     def start(self):
+        self.exchange.stream.start()
+        self.exchange.execution_stream.start()
         if self.monitor_only or not self.paper_enabled:
             self.monitor_thread=threading.Thread(target=self.monitor_loop,daemon=True)
             self.monitor_thread.start()
@@ -289,6 +299,8 @@ class Runtime:
     def stop(self):
         self.quit.set()
         self.exchange.sessions.shutdown()
+        self.exchange.stream.stop()
+        self.exchange.execution_stream.stop()
         if self.monitor_thread:
             self.monitor_thread.join(45)
             if self.monitor_thread.is_alive():
@@ -331,6 +343,12 @@ def make_server(runtime, port=8000):
                 self.send(200, runtime.store.snapshot())
             elif path == '/api/exchange':
                 self.send(200,runtime.exchange.status())
+            elif path == '/api/export/supervision.jsonl':
+                with runtime.store.lock:
+                    entries=runtime.store.db.execute('SELECT seq,at,kind,payload FROM supervision_events ORDER BY seq').fetchall()
+                self.send(200, ''.join(json.dumps(dict(seq=seq,at=at,kind=kind,data=json.loads(payload)),ensure_ascii=False)+'\n' for seq,at,kind,payload in entries).encode(), 'application/x-ndjson; charset=utf-8')
+            elif path == '/api/supervision':
+                self.send(200,runtime.exchange.governance.status())
             elif path == '/api/trading-session':
                 self.send(200,runtime.exchange.sessions.status())
             elif path == '/api/health':
@@ -375,6 +393,15 @@ def make_server(runtime, port=8000):
                 if not 1 <= len(key) <= 100:
                     raise ValueError('Idempotency-Key required')
                 path = urlsplit(self.path).path
+                if path == '/api/supervision/quarantine':
+                    self.send(200,runtime.exchange.governance.quarantine(data))
+                    return
+                if path == '/api/supervision/review':
+                    self.send(200,runtime.exchange.governance.review(data,self.headers.get('X-Jarvis-Approval')))
+                    return
+                if path == '/api/supervision/research':
+                    self.send(200,runtime.exchange.governance.research(data))
+                    return
                 if path.startswith('/api/trading-session/'):
                     self.send(200,runtime.exchange.sessions.run(path.rsplit('/',1)[-1],data,key,self.headers.get('X-Jarvis-Approval')))
                     return

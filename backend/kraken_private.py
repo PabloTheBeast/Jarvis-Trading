@@ -92,7 +92,7 @@ class KrakenPrivate:
         self.lock=threading.Lock()
 
     def call(self,method,parameters=None):
-        if method not in {'BalanceEx','OpenOrders','ClosedOrders','QueryOrders','QueryTrades','AddOrder','CancelOrder'}:
+        if method not in {'BalanceEx','OpenOrders','ClosedOrders','QueryOrders','QueryTrades','GetWebSocketsToken','AddOrder','CancelOrder'}:
             raise ExchangeError('Unsupported private operation')
         with self.lock:
             key,secret=self.credentials(self.database)

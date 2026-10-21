@@ -1,3 +1,10 @@
+# v0.8 — agentkontroll
+
+Liveagenters resultat, karantän, separat skuggprov och signerad begränsad återstart;
+riskbaserad storlek, låst ATR-exit, gemensamma idéspärrar och efterbevakning;
+veckoreserv och granskningsjournal; valbara Kraken-strömmar och isolerad
+research-/historiktestning. Se docs/AGENT-CONTROL.md för funktionernas faktiska gränser.
+
 # Ändringslogg
 
 ## v0.5.1 — härdad paper trading
