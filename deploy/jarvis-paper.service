@@ -1,0 +1,15 @@
+[Unit]
+Description=JARVIS paper trading backend
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Jarvis-Trading
+ExecStart=/usr/bin/python3 -m backend.server
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

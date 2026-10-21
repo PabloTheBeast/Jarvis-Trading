@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.jarvis/
+.venv/
+*.operator-key
+*.credentials.json
+*.credentials.json.tmp-*
