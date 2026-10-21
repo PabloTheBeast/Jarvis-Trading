@@ -30,6 +30,27 @@ class CredentialsMissing(ExchangeError):
     pass
 
 
+SAFE_ERRORS={
+    'EGeneral:Permission denied':'API-nyckeln saknar behörighet för anropet. Kontrollera att du ändrat samma nyckel som JARVIS använder.',
+    'EGeneral:Invalid arguments':'Kraken avvisade anropets parametrar.',
+    'EAPI:Invalid key':'Kraken känner inte igen API-nyckeln. Kontrollera att den är aktiv och korrekt inmatad.',
+    'EAPI:Invalid signature':'Signaturen stämmer inte. Kontrollera att API key och API secret hör till samma nyckel.',
+    'EAPI:Invalid nonce':'Nonce avvisades. Använd inte samma API-nyckel i flera installationer och återställ inte en äldre databas.',
+    'EAPI:Rate limit exceeded':'För många API-anrop. Vänta innan en ny kontokontroll.',
+    'EGeneral:Temporary lockout':'Kraken har tillfälligt spärrat anropen. Vänta innan nästa försök.',
+    'EOrder:Insufficient funds':'Tillgängligt saldo räcker inte för ordern.',
+    'EService:Unavailable':'Krakens tjänst är tillfälligt otillgänglig.',
+}
+
+
+def rejection_message(method,errors):
+    # Never echo arbitrary response text: it may contain sensitive request data.
+    known=list(dict.fromkeys(value for value in errors if isinstance(value,str) and value in SAFE_ERRORS))
+    if not known:
+        return 'Kraken avvisade '+method+' (okänd felkod). Inga råa svarsdata visas.'
+    return 'Kraken avvisade '+method+': '+'; '.join(value+' — '+SAFE_ERRORS[value] for value in known)
+
+
 def load_credentials(database):
     key,secret=os.environ.get('KRAKEN_API_KEY'),os.environ.get('KRAKEN_API_SECRET')
     if key or secret:
@@ -98,9 +119,7 @@ class KrakenPrivate:
                     'EOrder:', 'EAPI:', 'EAuth:', 'EGeneral:Invalid arguments',
                     'EGeneral:Permission denied')) for value in payload['error']):
                     raise ExchangeUnknown('Kraken rapporterade ett tjänstefel; stäm av ordern innan fler försök.',True)
-                # Only the stable code prefix is displayed; raw server text is omitted.
-                codes=','.join(str(value).split(':',1)[0] for value in payload['error'])
-                raise ExchangeError('Kraken avvisade anropet ('+codes+').')
+                raise ExchangeError(rejection_message(method,payload['error']))
             if not isinstance(payload.get('result'),dict):
                 raise ExchangeUnknown('Kraken returnerade inget verifierbart resultat.')
             return payload['result']

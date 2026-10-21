@@ -107,3 +107,23 @@ Verifierad mot Krakens officiella SDK-källor för
 och [order-ID:n](https://github.com/krakenfx/kraken-api-sdk/blob/main/rust/src/types/ids.rs).
 Enhetstester använder SDK:ns referenssignatur och simulerade privata svar. Detta
 ersätter inte verifiering av konto, behörigheter och verklig exekvering lokalt.
+
+## När kontokontrollen nekas
+
+Uppdatera koden och starta om servern för att få känd fullständig felkod samt
+namnet på anropet, exempelvis `BalanceEx: EGeneral:Permission denied`.
+Råa okända börssvar visas inte, eftersom de kan innehålla känsliga uppgifter.
+
+- `Permission denied`: kontrollera behörigheterna på just den nyckel som sparats
+  för JARVIS. `BalanceEx` behöver läsrätt för medel; `OpenOrders` behöver läsrätt
+  för öppna order. Att ändra en annan nyckel hjälper inte.
+- `Invalid key`: kontrollera att nyckeln är aktiv och korrekt inmatad.
+- `Invalid signature`: API key och API secret måste höra till samma nyckel.
+- `Invalid nonce`: använd en dedikerad nyckel för en installation; återställ inte
+  en äldre databas som lösning.
+
+Vid behov mata in rätt nyckelpar på nytt lokalt med
+`python3 -m backend.ops configure-kraken --replace`. Miljövariablerna
+`KRAKEN_API_KEY` och `KRAKEN_API_SECRET` har företräde framför filen om de är satta;
+att ersätta filen ändrar inte dessa. Dela bara felkoden/anropsnamnet vid felsökning,
+aldrig nyckelfilen, API-hemligheter eller innehållet i miljövariablerna.

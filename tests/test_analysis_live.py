@@ -153,6 +153,25 @@ class Private:
 
 
 class SigningTests(unittest.TestCase):
+    def test_known_rejections_identify_operation_and_reason_without_raw_data(self):
+        for code in ['EGeneral:Permission denied','EAPI:Invalid key','EAPI:Invalid signature','EAPI:Invalid nonce']:
+            with self.subTest(code=code):
+                def opener(request,timeout):
+                    return io.BytesIO(json.dumps(dict(error=[code,'sensitive-api-secret'],result={})).encode())
+                client=KrakenPrivate('/unused',lambda:123,opener,lambda _:('unit',bytes([1])*32))
+                with self.assertRaises(ExchangeError) as caught:client.call('BalanceEx')
+                self.assertIn('BalanceEx',str(caught.exception))
+                self.assertIn(code,str(caught.exception))
+                self.assertNotIn('sensitive-api-secret',str(caught.exception))
+
+    def test_unknown_error_text_is_never_displayed(self):
+        def opener(request,timeout):
+            return io.BytesIO(json.dumps(dict(error=['EGeneral:secret-copied-from-request'],result={})).encode())
+        client=KrakenPrivate('/unused',lambda:123,opener,lambda _:('unit',bytes([1])*32))
+        with self.assertRaises(ExchangeError) as caught:client.call('OpenOrders')
+        self.assertIn('OpenOrders',str(caught.exception))
+        self.assertNotIn('secret-copied',str(caught.exception))
+
     def test_official_kraken_sdk_golden_signature_vector(self):
         secret=bytes([1])*32
         signature=api_signature(secret,1700000000000000000,'/0/private/Balance',b'nonce=1700000000000000000')
