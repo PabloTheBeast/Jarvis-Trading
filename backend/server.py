@@ -33,6 +33,7 @@ class Store:
     def __init__(self, path):
         path = Path(path)
         self.path = path
+        self.paper_mode=False
         self.fault_hook = None
         path.parent.mkdir(parents=True, exist_ok=True)
         self.guard = open(str(path)+'.lock', 'a')
@@ -127,7 +128,7 @@ class Store:
             public.pop('book', None)
             public.pop('intentOrders', None)
             public['canOpenDay'] = not public['dayClosed'] or clock(datetime.now(timezone.utc))[0] > public['reportDate']
-            return dict(state=public, agents=Engine(self.state).agents(), assets=ASSETS, paperOnly=True,scope='paper-portfolio',serverTime=datetime.now(timezone.utc).isoformat())
+            return dict(state=public, agents=Engine(self.state).agents(), assets=ASSETS, paperOnly=True,paperMode=self.paper_mode,scope='paper-portfolio',serverTime=datetime.now(timezone.utc).isoformat())
 
     def close(self):
         self.db.close()
@@ -135,7 +136,7 @@ class Store:
 
 
 class Runtime:
-    def __init__(self, store, market=None):
+    def __init__(self, store, market=None,paper_enabled=None):
         self.store = store
         self.market = market or Kraken()
         self.quit = threading.Event()
@@ -144,9 +145,12 @@ class Runtime:
         self.last_prices = None
         self.last_metadata = {}
         self.thread = None
+        self.paper_enabled=os.environ.get('JARVIS_PAPER_MODE')=='1' if paper_enabled is None else paper_enabled
+        store.paper_mode=self.paper_enabled
         self.monitor_only=os.environ.get('JARVIS_MONITOR_ONLY')=='1'
         self.exchange = LiveService(store,enabled=False if self.monitor_only else None)
         self.exchange.monitor_only=self.monitor_only
+        self.exchange.monitoring=not self.paper_enabled or self.monitor_only
         self.monitor_thread=None
 
     def monitor_market(self):
@@ -201,7 +205,9 @@ class Runtime:
         return self.store.change('tick', apply)
 
     def command(self, name, data, key, approval=None):
-        if self.monitor_only and name in ('start','step'):
+        if not self.paper_enabled and name not in {'refresh-market','read-notices','save','stop'}:
+            raise ValueError('Simulerad handel är avstängd. Bevakning och Kraken-konto är tillgängliga.')
+        if (self.monitor_only or not self.paper_enabled) and name in ('start','step'):
             raise ValueError('Bevakningsläge: handel är avstängd. Kurser och kontosaldo uppdateras automatiskt.')
         request = json.dumps(dict(name=name, data=data), sort_keys=True, allow_nan=False)
         with self.store.lock:
@@ -268,7 +274,7 @@ class Runtime:
             deadline = time.monotonic()+snap['autoPace']/1000
 
     def start(self):
-        if self.monitor_only:
+        if self.monitor_only or not self.paper_enabled:
             self.monitor_thread=threading.Thread(target=self.monitor_loop,daemon=True)
             self.monitor_thread.start()
             return

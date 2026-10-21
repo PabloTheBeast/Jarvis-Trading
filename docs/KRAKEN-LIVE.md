@@ -1,8 +1,8 @@
 # Kraken: separat manuell orderläggning
 
-Agenter och CHEF använder fortsatt paper-portföljen i SEK. Kraken-vyn visar verkligt
-saldo i EUR/BTC/ETH. Pengar överförs aldrig mellan dessa två bokföringar. Det skyddade
-paper-saldot är inget bankkonto. Kopplingen är ett begränsat manuellt pilotläge,
+Agenter och CHEF analyserar kurser; automatisk agenthandel är inte aktiverad.
+Kraken-vyn visar verkligt saldo i EUR/BTC/ETH. Äldre simulerad bokföring är ett
+tekniskt arkiv och visas inte i den vanliga dashboarden. Kopplingen är ett begränsat manuellt pilotläge,
 inte en autonom livehandelsmotor. Inga riktiga order har skickats under utvecklingen.
 
 ## Konfigurera i Ubuntu/WSL
@@ -140,3 +140,17 @@ samt Fråga efter öppna order och affärer. Publika kurser kräver ingen nyckel
 
 Bevakningen fördelar inte kapital till agenter och är inte autonom livehandel.
 Svenska aktiekurser är ännu syntetiska och kräver en separat datakälla.
+
+## Verifierade avslut och tidsstämplar
+
+Kontokontroll/bevakning stämmer även av redan kända JARVIS-order. QueryTrades
+läser tidsstämplar från Kraken; nyckeln behöver läsrätt för affärer. Bara
+validerade avslut sparas append-only i live_fills med unikt trade-ID. Upprepade
+avstämningar skapar inga dubbletter och ofullständig hämtning raderar inte redan
+verifierade avslut. Vid fel visas att historiken är ofullständig; inga tidpunkter
+gissas från preview-, sändnings- eller lokal avstämningstid.
+
+Historik visar köp → sälj enligt FIFO med avgifter, kvarvarande köp och försäljningar
+med okänt inköp separat. Datum/tid visas i Stockholm med årtal och sekunder.
+Nuvarande order är manuella. Ingen historik för externa Kraken-order eller äldre
+innehav importeras automatiskt. Riktiga avslut hamnar aldrig i simulatorns journal.

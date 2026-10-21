@@ -22,7 +22,7 @@ class ServerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = Path(self.tmp.name)/'state.sqlite3'
         self.store = Store(self.path)
-        self.runtime = Runtime(self.store, FakeMarket())
+        self.runtime = Runtime(self.store, FakeMarket(),paper_enabled=True)
         self.server = make_server(self.runtime, 0)
         self.url = 'http://127.0.0.1:'+str(self.server.server_port)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

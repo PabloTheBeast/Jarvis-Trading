@@ -1,13 +1,13 @@
 # JARVIS Trading v0.6 — Kraken och marknadsanalys
 
-Python kör agenter, CHEF, riskkontroller, ordermotor och kapitalbokföring utan en
-öppen webbläsare. **Agenterna handlar enbart med paper-kapital.** En separat
-Kraken-koppling stöder manuellt ägarsignerade riktiga limitorder och är avstängd
-som standard. Se [lokal Kraken-konfiguration](docs/KRAKEN-LIVE.md).
+Python kör kursbevakning och agentbedömningar utan en öppen webbläsare.
+**Vanlig start visar verkligt Kraken-konto och bekräftade affärer; simulerad handel
+är avstängd och gamla testaffärer visas inte.** Agenterna analyserar och rapporterar
+till CHEF, men skickar inga riktiga order. Manuella ägarsignerade Kraken-limitorder
+är avstängda som standard. Se [lokal Kraken-konfiguration](docs/KRAKEN-LIVE.md).
 
-Dashboarden har nio flikar: Översikt, Marknad, Beslut, Agenter, Portfölj, Risk & CHEF,
-Historik, System och Kraken-konto. Den använder systemtypsnitt, större tabelltext
-och separata saldon för paper-kapital i SEK och Kraken-kontot i EUR.
+Dashboarden visar Översikt, Marknad, Beslut, Agenter, Historik, System och
+Kraken-konto. Systemtypsnitt och tabellsiffror gör datum och belopp tydliga.
 
 ## Starta på Windows med Ubuntu/WSL
 
@@ -18,8 +18,8 @@ python3 -m unittest discover -s tests -v
 python3 -m backend.server
 ```
 
-Öppna serverns rot på port 8000 i Windows-webbläsaren och välj **Kör 1 steg** eller
-**Starta paper**. Låt Python-processen köra. Servern är avsiktligt bara åtkomlig
+Öppna serverns rot på port 8000 i Windows-webbläsaren och välj **Beslut**,
+**Kraken-konto** eller **Historik**. Kurser och konto bevakas automatiskt. Låt Python-processen köra. Servern är avsiktligt bara åtkomlig
 på loopback. Molnserverns loopback nås inte från en annan dator utan en tunnel.
 
 Krav: Python 3.12+ på Linux/WSL, SQLite, tidszonsdata. Inga pip-/npm-paket eller
@@ -32,8 +32,8 @@ Historiska felaktigt dubblerade dagsrapporter bevaras men räknas inte mot ny ex
 Migreringen avrundar gamla flyttal till nano-SEK och journalför eventuell minimal
 avstämningsjustering. För stor differens stoppar uppgraderingen.
 
-Efter **varje processomstart**, även efter en krasch, är motorn pausad. Starta den
-uttryckligen igen. En global riskpaus ligger kvar tills skuggtest och ägargodkännande
+Efter **varje processomstart** är den arkiverade testmotorn pausad. Den vanliga
+kurs- och kontobevakningen startar automatiskt; inga riktiga order skickas automatiskt. En global riskpaus ligger kvar tills skuggtest och ägargodkännande
 är klara. Övervakningstjänsten får återstarta processen men inte återuppta handeln.
 
 ## Bevakning utan insättning eller handel
@@ -103,7 +103,31 @@ att granska en eventuell befintlig position, inte att blanka. Referenspris är
 stapelns slutkurs i EUR, inte ett föreslaget limitpris. Det finns ingen garanti
 att signalen leder till en lönsam affär.
 
-## Data och paper-exekvering
+## Verkliga affärer med köp- och säljdatum
+
+**Historik** visar bara verifierade avslut för order skickade via JARVIS. Kraken
+`QueryOrders` ger orderstatus och avsluts-ID; `QueryTrades` ger faktisk avslutstid,
+pris, antal och avgift. En skickad/öppen order är ingen affär. Tidpunkter lagras i
+UTC och visas med år, månad, dag och sekunder i Europe/Stockholm inklusive sommartid.
+Kontobevakning och knappen Uppdatera från Kraken stämmer av kända JARVIS-order.
+
+Köp matchas enligt FIFO mot försäljningar, separat per par och ansvarig agent.
+Vyn visar köpt datum/tid, sålt datum/tid, matchat antal och netto efter avgifter.
+Kvarvarande köp visas separat. Försäljning utan känt inköp får okänt inköpsdatum
+ och inget gissat resultat. Historiken omfattar inte automatiskt externa Kraken-order
+eller äldre kontoinnehav. Den är inte en skatte-/portföljbok.
+
+Nuvarande verkliga order är manuella och märks **Manuell**. Inga affärer tillskrivs
+agenter som inte lagt dem. Automatisk agenthandel är fortfarande inte implementerad.
+
+Gamla simulerade pengar, köp/sälj, avkastning och testkontroller visas inte i den
+vanliga dashboarden. Befintlig databas och journal bevaras som tekniskt arkiv;
+ingen historik eller riskpaus raderas under uppgradering. `JARVIS_PAPER_MODE=1`
+är ett uttryckligt utvecklingsläge för den gamla simulatorns regressionstester,
+inte den vanliga driftinställningen. Den tidigare simulatorreferensen nedan gäller
+bara detta arkiverade testläge och ska inte tolkas som verklig kontoaktivitet.
+
+## Arkiverad simulator: data och exekvering
 
 - Kraken publika BTC/ETH-tickers och orderdjup i EUR; ECB:s daterade dagliga
   EUR/SEK-referenskurs används för SEK-redovisning. Ingen verklig valutaväxling sker.
@@ -139,7 +163,7 @@ tidsstämplar; okänd korrelation räknas konservativt som gemensam exponering.
 eller flytta handelsdagen. Beslut visar regelbaserade signaler och deras underlag;
 dessa är beskrivningar av historiska data, inte prognoser eller vinstlöften.
 
-## Risk, datum och kapital
+## Arkiverad simulator: risk, datum och kapital
 
 - Köpgränser: högst 70 % totalt investerat, 25 % per instrument, 40 % korrelerad
   exponering, agentbudget och dynamiskt ordertak högst 2 000 SEK. Alla delavslut
@@ -164,7 +188,7 @@ dessa är beskrivningar av historiska data, inte prognoser eller vinstlöften.
   i **heltals-nano-SEK**. Konvertering sker med Decimal; dashboardtal är projektioner.
   Insättningar är inte vinster. Skyddat konto är ett internt paper-saldo, inget bankkonto.
 
-## Godkänn återstart eller frigör sparkapital
+## Arkiverad simulator: godkänn återstart eller frigör testkapital
 
 Ett vanligt API-fält med `approved: true` räcker inte. Skapa en ägarsignerad engångskod
 i en **andra Ubuntu-terminal**, från samma projektmapp och som samma Ubuntu-användare:
@@ -218,6 +242,7 @@ node --check dashboard.js
 # Valfritt: Playwright + installerad Chromium
 CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_smoke.py
 CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_advisory.py
+CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_trade_history.py
 ```
 
 Sviten testar bland annat hårda krascher före/efter commit, misslyckad journalskrivning,

@@ -248,7 +248,7 @@ class MoneyAndOwnerTests(unittest.TestCase):
                 gain(e)
                 e.sweep('test')
             store.change('seed',seed)
-            r=Runtime(store)
+            r=Runtime(store,paper_enabled=True)
             with self.assertRaises(ApprovalError):
                 r.command('release',dict(amount=1,approved=True),'unsigned')
             token=issue(store.operator_key,'release',1)
@@ -397,7 +397,7 @@ class RecoveryTests(unittest.TestCase):
             store=Store(path)
             self.assertTrue(store.state['halt'])
             with self.assertRaises(ApprovalError):
-                Runtime(store).command('approve',{},'unsigned')
+                Runtime(store,paper_enabled=True).command('approve',{},'unsigned')
             self.assertTrue(store.state['halt'])
             store.close()
 

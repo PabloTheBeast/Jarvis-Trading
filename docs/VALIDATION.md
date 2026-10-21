@@ -2,7 +2,7 @@
 
 Utförd 2026-10-21 i molnmiljön med Python 3.12.14, Node 24.19.0 och systemets Chromium.
 
-- **95 enhets-/API-tester passerade**, inga överhoppade tester. Befintliga tester för
+- **104 enhets-/API-tester passerade**, inga överhoppade tester. Befintliga tester för
   kapital, risk, migration, backup, hårda subprocesskrascher, 500 steg och åtta
   simulerade dygn passerar fortsatt. Simulerad tid bevisar inte långvarig drift.
 - Nya regressionstester täcker avslutade OHLC-staplar, luckor/gamla data, oberoende
@@ -59,3 +59,26 @@ fem agentrapporter, konsensus, opt-in skrivbordsnotis via teststub, ingen dubble
 vid polling, kvarvarande historik utan notisreplay efter omladdning, utgången
 bedömning, mobil layout och inga order eller JavaScript-fel. Desktop-layouten
 granskades visuellt. Inga riktiga skrivbordsnotiser eller privata börsanrop skickades.
+
+Verklig affärshistorik: 9 nya tester täcker FIFO/delvolymer, avgifter, okända
+inköp, isolering mellan agenter, börsens tidsstämplar, återstart/deduplicering,
+append-only-skydd, ofyllda order utan köptid, felaktiga/saknade avslut, bevarad
+historik vid ofullständigt svar och automatisk avstämning vid kontokontroll.
+Standarddrift blockerar simulatorns muterande kommandon och bevarar dess arkiv.
+Alla privata börssvar är simulerade; inga verkliga order har skickats.
+
+Chromium: browser_trade_history.py passerade med explicit simulerade avslut:
+normal vy visar inga paper-saldon, testkontroller eller gamla affärer; köp/sälj
+visas med årtal, datum och sekund i Stockholm; matchat netto inkluderar avgifter;
+manuella affärer är inte agentaffärer; omladdning och mobilbredd 390 px passerar
+utan sidöverströmning eller JavaScript-fel. Befintligt legacy-browser-test körs
+uttryckligen med paper_enabled=True. Även agent-/notis-browser-testet passerar.
+Dashboarden öppnades via lokal HTTP i utvecklingsmiljön, före och efter ändringen.
+Befintlig utvecklingsdatabas säkerhetskopierades före omstart; arkivdata raderades inte.
+
+Ytterligare test verifierar 25 delavslut hämtade i två QueryTrades-batcher (20+5),
+med 25 separata börstidsstämplar. Den uppgraderade ordinarie localhost-instansen
+kontrollerades också med verkliga publika data och utan privata nycklar: testläge
+avstängt, live avstängt, tidigare tick 14 bevarat, inga faktiska avslut påhittade,
+normal historik tom och inga JavaScript-fel. API-nycklar/finansierad exekvering är
+fortfarande inte verifierade i utvecklingsmiljön.

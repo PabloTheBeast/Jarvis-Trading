@@ -27,3 +27,7 @@ summary{cursor:pointer;font-weight:600;min-height:30px}details[open]>summary{mar
 @media(max-width:1100px){.agent-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:760px){.app-header{padding:18px;align-items:flex-start}.brand p{display:none}.header-status{justify-content:flex-end}.app-shell{padding:0 16px}.page-heading{align-items:flex-start;flex-direction:column;margin-top:12px}.page-heading>.toolbar{width:100%}.page-heading>.toolbar button{flex:1}.overview-grid,.two-columns{grid-template-columns:1fr;gap:0}.panel{padding:18px}.agent-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.status-grid{grid-template-columns:1fr}.stat{padding:16px}.stats{gap:10px}h2{font-size:25px}.caption{font-size:12px}.form-row{flex-wrap:wrap}.form-row button{flex:1}.toast-stack{left:16px;right:16px;max-width:none}table{font-size:13px}.tabbar button{font-size:13px;padding:8px 11px}.header-status #clock{display:none}}
 @media(prefers-reduced-motion:no-preference){button{transition:background .12s ease,border-color .12s ease}}
+
+body:not(.paper-mode) .paper-ui{display:none!important}body.paper-mode .real-ui{display:none!important}
+
+@media(max-width:760px){.app-header{flex-wrap:wrap;gap:12px}.header-status{min-width:0;max-width:100%}.header-status .badge{white-space:normal}}

@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 from .approval import verify
 from .kraken_private import KrakenPrivate, ExchangeError, ExchangeUnknown
 from .market import Kraken, PAIRS, canonical, MarketError
+from .trade_history import history
 
 TERMINAL={'CLOSED','CANCELLED','EXPIRED','REJECTED'}
 ACTIVE={'VALIDATION_UNKNOWN','SENDING','UNKNOWN','ACKNOWLEDGED','OPEN','PARTIAL','CANCEL_REQUESTED'}
@@ -57,6 +58,7 @@ class LiveService:
         self.last_check=None
         self.last_error=None
         self.monitor_only=False
+        self.monitoring=False
         with store.lock:
             store.db.executescript('''
                 CREATE TABLE IF NOT EXISTS live_meta(key TEXT PRIMARY KEY,value INTEGER NOT NULL);
@@ -64,6 +66,11 @@ class LiveService:
                 CREATE TABLE IF NOT EXISTS live_requests(id TEXT PRIMARY KEY,request TEXT NOT NULL,ticket TEXT);
                 CREATE TABLE IF NOT EXISTS live_approvals(nonce TEXT PRIMARY KEY,ticket TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS live_events(seq INTEGER PRIMARY KEY,at TEXT NOT NULL,ticket TEXT,event TEXT NOT NULL,payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS live_fills(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+                CREATE TRIGGER IF NOT EXISTS live_fills_no_update BEFORE UPDATE ON live_fills
+                BEGIN SELECT RAISE(ABORT,'Live fills are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS live_fills_no_delete BEFORE DELETE ON live_fills
+                BEGIN SELECT RAISE(ABORT,'Live fills are append-only'); END;
                 CREATE TRIGGER IF NOT EXISTS live_events_no_update BEFORE UPDATE ON live_events
                 BEGIN SELECT RAISE(ABORT,'Live journal is append-only'); END;
                 CREATE TRIGGER IF NOT EXISTS live_events_no_delete BEFORE DELETE ON live_events
@@ -106,10 +113,12 @@ class LiveService:
         return ticket
 
     def status(self):
+        with self.store.lock:
+            fills=[json.loads(row[0]) for row in self.store.db.execute('SELECT payload FROM live_fills')]
         return dict(liveEnabled=self.enabled,maximumOrderEUR=str(self.maximum),mode='OWNER_APPROVED_LIMIT_ONLY',
-            monitorOnly=self.monitor_only,marketRefreshSeconds=15 if self.monitor_only else None,accountRefreshSeconds=60 if self.monitor_only else None,
+            monitorOnly=self.monitor_only,monitoringActive=self.monitoring,marketRefreshSeconds=15 if self.monitoring else None,accountRefreshSeconds=60 if self.monitoring else None,
             connected=self.last_account is not None,checkedAt=self.last_check,error=self.last_error,
-            account=self.last_account,tickets=self.tickets()[:100],agentsUsePaperOnly=True,
+            account=self.last_account,tickets=self.tickets()[:100],agentsUsePaperOnly=True,tradeHistory=history(fills),
             instructions='Konfigurera lokalt med python3 -m backend.ops configure-kraken. Börja med en nyckel utan uttagsrättigheter.')
 
     def account(self):
@@ -148,7 +157,45 @@ class LiveService:
                 self.last_account=None
                 self.last_error=str(exc)
                 raise
+            for ticket in self.tickets():
+                if ticket['state'] in ACTIVE or ticket.get('exchangeOrderId') and not ticket.get('fillHistoryComplete'):
+                    try:
+                        self.reconcile(ticket)
+                    except (ExchangeError,ExchangeUnknown):
+                        self.last_error='Saldo hämtat, men en orderhistorik kunde inte uppdateras. Kontrollera orderns avstämning.'
             return self.status()
+
+    def collect_fills(self,ticket):
+        ids=ticket.get('tradeIds',[])
+        if not isinstance(ids,list) or any(not isinstance(value,str) for value in ids) or len(ids)!=len(set(ids)):
+            raise ExchangeError('Börsens avsluts-ID kan inte verifieras.')
+        fills=[]
+        for offset in range(0,len(ids),20):
+            response=self.private.call('QueryTrades',dict(txid=','.join(ids[offset:offset+20])))
+            for ident in ids[offset:offset+20]:
+                raw=response.get(ident)
+                if not isinstance(raw,dict):raise ExchangeError('Ett avslut saknas hos Kraken.')
+                if (raw.get('ordertxid')!=ticket['exchangeOrderId'] or raw.get('type')!=ticket['side']
+                    or canonical(str(raw.get('pair','')).replace('/',''))!=ticket['pair']):
+                    raise ExchangeError('Avslutet hör inte till den verifierade ordern.')
+                volume=decimal(raw.get('vol'),True);price=decimal(raw.get('price'),True)
+                cost=decimal(raw.get('cost'),True);fee=decimal(raw.get('fee'))
+                stamp=decimal(raw.get('time'),True)
+                if cost<0 or fee<0 or stamp>Decimal(str(time.time()+5)):
+                    raise ExchangeError('Ogiltigt belopp eller framtida avslutstid.')
+                when=datetime.fromtimestamp(float(stamp),timezone.utc).isoformat()
+                fills.append(dict(tradeId=ident,ticketId=ticket['id'],orderId=ticket['exchangeOrderId'],
+                    pair=ticket['pair'],side=ticket['side'],quantity=str(volume),priceEUR=str(price),
+                    costEUR=str(cost),feeEUR=str(fee),executedAt=when,agentId=None,actor='Manuell'))
+        if sum((decimal(f['quantity']) for f in fills),Decimal(0))!=decimal(ticket.get('filledVolume','0')):
+            raise ExchangeError('Avslutshistoriken är ofullständig; inga tidpunkter gissas.')
+        with self.store.lock,self.store.db:
+            for fill in fills:
+                old=self.store.db.execute('SELECT payload FROM live_fills WHERE id=?',(fill['tradeId'],)).fetchone()
+                if old and json.loads(old[0])!=fill:raise ExchangeError('Ett tidigare avslut har ändrats; manuell avstämning krävs.')
+                self.store.db.execute('INSERT OR IGNORE INTO live_fills VALUES(?,?)',(fill['tradeId'],json.dumps(fill)))
+        ticket['fillHistoryComplete']=ticket['state'] in TERMINAL
+        ticket.pop('historyError',None)
 
     def preflight(self,parameters):
         try:
@@ -359,7 +406,7 @@ class LiveService:
         return self.save(ticket,ticket['state'])
 
     def reconcile(self,ticket):
-        if ticket['state'] not in ACTIVE and ticket['state']!='VALIDATION_UNKNOWN':
+        if ticket['state'] not in ACTIVE and not ticket.get('exchangeOrderId'):
             return ticket
         match=None
         if ticket.get('exchangeOrderId'):
@@ -405,4 +452,8 @@ class LiveService:
             if ticket['state']=='OPEN' and executed>0:
                 ticket['state']='PARTIAL'
             ticket.pop('error',None)
+            try:
+                self.collect_fills(ticket)
+            except (ExchangeError,ExchangeUnknown,ValueError,OverflowError):
+                ticket.update(fillHistoryComplete=False,historyError='Avslutsdetaljer kunde inte verifieras. Tidigare verifierade affärer bevaras; försök stämma av igen.')
         return self.save(ticket,'RECONCILED')

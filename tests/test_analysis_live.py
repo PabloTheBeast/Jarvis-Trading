@@ -126,6 +126,7 @@ class Private:
         self.calls=[]
         self.failure=None
         self.orders={}
+        self.trades={}
         self.balance={'ZEUR':dict(balance='1000',hold_trade='0'),'XXBT':dict(balance='0',hold_trade='0'),'XETH':dict(balance='0',hold_trade='0')}
 
     def call(self,method,parameters=None):
@@ -134,6 +135,7 @@ class Private:
         if method=='BalanceEx':return copy.deepcopy(self.balance)
         if method=='OpenOrders':return dict(open=copy.deepcopy(self.orders))
         if method=='ClosedOrders':return dict(closed={},count=0)
+        if method=='QueryTrades':return {key:copy.deepcopy(self.trades[key]) for key in data['txid'].split(',') if key in self.trades}
         if method=='QueryOrders':return {data['txid']:copy.deepcopy(self.orders[data['txid']])} if data['txid'] in self.orders else {}
         if method=='CancelOrder':
             if self.failure=='cancel':raise ExchangeUnknown('timeout')

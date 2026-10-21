@@ -11,7 +11,7 @@
 <a class="skip-link" href="#main-content">Till innehållet</a>
 <header class="app-header">
   <div class="brand"><span class="brand-mark" aria-hidden="true">J</span><div><h1>JARVIS <span>Trading</span></h1><p>Marknad, beslut och risk på samma plats</p></div></div>
-  <div class="header-status"><span class="badge" id="paper-mode">Paper-portfölj · SEK</span><span id="clock" class="muted">Ansluter…</span></div>
+  <div class="header-status"><span class="badge" id="paper-mode">Kraken · bevakning</span><span id="clock" class="muted">Ansluter…</span></div>
 </header>
 <div class="app-shell">
   <nav class="tabbar" role="tablist" aria-label="Huvudvyer">
@@ -19,8 +19,8 @@
     <button type="button" id="nav-market" data-tab="market" role="tab" aria-controls="tab-market" aria-selected="false" tabindex="-1">Marknad</button>
     <button type="button" id="nav-decisions" data-tab="decisions" role="tab" aria-controls="tab-decisions" aria-selected="false" tabindex="-1">Beslut</button>
     <button type="button" id="nav-agents" data-tab="agents" role="tab" aria-controls="tab-agents" aria-selected="false" tabindex="-1">Agenter <span id="nav-agent-count" class="count">10</span></button>
-    <button type="button" id="nav-portfolio" data-tab="portfolio" role="tab" aria-controls="tab-portfolio" aria-selected="false" tabindex="-1">Portfölj</button>
-    <button type="button" id="nav-risk" data-tab="risk" role="tab" aria-controls="tab-risk" aria-selected="false" tabindex="-1">Risk &amp; CHEF</button>
+    <button type="button" id="nav-portfolio" class="paper-ui" data-tab="portfolio" role="tab" aria-controls="tab-portfolio" aria-selected="false" tabindex="-1">Portfölj</button>
+    <button type="button" id="nav-risk" class="paper-ui" data-tab="risk" role="tab" aria-controls="tab-risk" aria-selected="false" tabindex="-1">Risk &amp; CHEF</button>
     <button type="button" id="nav-history" data-tab="history" role="tab" aria-controls="tab-history" aria-selected="false" tabindex="-1">Historik <span id="nav-alert-count" class="count" hidden>0</span></button>
     <button type="button" id="nav-system" data-tab="system" role="tab" aria-controls="tab-system" aria-selected="false" tabindex="-1">System</button>
     <button type="button" id="nav-exchange" data-tab="exchange" role="tab" aria-controls="tab-exchange" aria-selected="false" tabindex="-1">Kraken-konto</button>
@@ -29,6 +29,8 @@
   <div id="command-error" class="notice error" role="alert" hidden></div>
   <main id="main-content" tabindex="-1">
     <section class="tabview" id="tab-overview" role="tabpanel" aria-labelledby="nav-overview">
+      <div class="real-ui"><div class="page-heading"><div><p class="eyebrow">KRAKEN · VERKLIGT KONTO</p><h2>Marknad &amp; konto</h2><p>Agenterna bevakar BTC och ETH. Bara bekräftade Kraken-avslut visas som affärer.</p></div><button type="button" data-view="exchange">Visa Kraken-konto</button></div><div id="real-overview" class="stats"></div><p class="caption">Saldot läses från Kraken. Svenska aktier är ännu inte anslutna. Ingen automatisk agenthandel är aktiverad.</p></div>
+      <div class="paper-ui">
       <div class="page-heading"><div><p class="eyebrow">PAPER TRADING</p><h2>Din översikt</h2><p>Simulerat kapital. Riktiga Kraken-order hanteras separat i Kraken-konto.</p></div><div class="toolbar"><button id="step" type="button">Kör 1 steg</button><button id="run" type="button" class="primary">Starta paper</button><button id="stop" type="button" class="danger">Pausa paper</button></div></div>
       <div class="stats">
         <article class="stat"><span>Tradingkapital</span><strong id="equity">—</strong><small id="pnl">Resultat exklusive ägarrörelser</small></article>
@@ -40,17 +42,18 @@
         <article class="panel"><div class="section-heading"><h3>Kontovärde</h3><span id="tick" class="muted">Steg 0</span></div><svg id="chart" viewBox="0 0 780 250" role="img" aria-label="Paper-kontots värde i SEK över handelssteg"></svg><p class="caption">Kontovärde i SEK, inklusive ägarrörelser. Visar inte en insättningsjusterad avkastningskurva.</p></article>
         <article class="panel"><h3>Risk just nu</h3><dl class="facts"><div><dt>Investerat</dt><dd id="invested">—</dd></div><div><dt>Exponering</dt><dd id="exposure">—</dd></div><div><dt>Historisk drawdown</dt><dd id="drawdown">—</dd></div><div><dt>Paper-motor</dt><dd id="status">Pausad</dd></div><div><dt>Marknadsdata</dt><dd id="overview-data">Väntar</dd></div></dl><button type="button" data-view="risk">Visa riskkontroller</button><p class="caption">Paus av paper-motorn annullerar inte order som redan skickats till Kraken.</p></article>
       </div>
+      </div>
       <article class="panel"><div class="section-heading"><div><h3>Agenter</h3><p id="agent-summary" class="muted">Inväntar servern</p></div><button id="view-all-agents" type="button">Visa agentdetaljer</button></div><div id="agent-compact" class="agent-grid"></div></article>
       <article class="panel"><div class="section-heading"><h3>Agenternas kryptobevakning</h3><button type="button" data-view="decisions">Visa agentrapporter &amp; CHEF-meddelanden</button></div><p id="overview-advisory">Inväntar kryptodata. Ingen insättning krävs.</p></article>
     </section>
 
     <section class="tabview" id="tab-market" role="tabpanel" aria-labelledby="nav-market" hidden>
       <div class="page-heading"><div><p class="eyebrow">KRAKEN · SPOT · EUR</p><h2>Marknadsanalys</h2><p>Analys av avslutade femminutersstaplar. Uppdateringshastigheten ändrar inte analysens tidsfönster.</p></div><div class="toolbar"><button id="refresh-market" type="button">Uppdatera marknad</button><label>Instrument<select id="market-symbol"><option value="BTC-SIM">BTC / EUR</option><option value="ETH-SIM">ETH / EUR</option></select></label></div></div>
-      <div id="market-quality" class="notice" role="status">Hämta marknadsdata med ett paper-steg för att läsa in analysen.</div>
-      <article class="panel"><div class="section-heading"><h3 id="market-chart-title">BTC / EUR · 5 minuter</h3><span class="muted">Avslutade staplar</span></div><svg id="market-chart" viewBox="0 0 900 300" role="img" aria-label="Fem-minuters OHLC-priser i EUR"></svg><p class="caption">Köp-/säljsidor och analys anges i EUR. Paper-portföljen omräknas till SEK med ECB:s daterade referenskurs.</p></article>
+      <div id="market-quality" class="notice" role="status">Uppdatera marknaden för att läsa in analysen.</div>
+      <article class="panel"><div class="section-heading"><h3 id="market-chart-title">BTC / EUR · 5 minuter</h3><span class="muted">Avslutade staplar</span></div><svg id="market-chart" viewBox="0 0 900 300" role="img" aria-label="Fem-minuters OHLC-priser i EUR"></svg><p class="caption">Köp-/säljsidor och analys anges i EUR. SEK-referenser använder ECB:s daterade kurs.</p></article>
       <div id="analysis-indicators" class="stats"></div>
       <div class="two-columns"><article class="panel"><h3>Orderdjup &amp; datakvalitet</h3><dl id="market-quotes" class="facts"></dl></article><article class="panel"><h3>Strategiernas observationer</h3><div id="market-signals"></div><p class="caption">Regelbaserade signaler, inte prognoser eller sannolikheter för vinst.</p></article></div>
-      <article class="panel"><h3>Alla instrument</h3><div class="scroll"><table><thead><tr><th>Instrument</th><th>Datakälla</th><th>Paper-markering, SEK</th><th>Senaste steg</th></tr></thead><tbody id="prices"></tbody></table></div></article>
+      <article class="panel paper-ui"><h3>Alla instrument</h3><div class="scroll"><table><thead><tr><th>Instrument</th><th>Datakälla</th><th>Paper-markering, SEK</th><th>Senaste steg</th></tr></thead><tbody id="prices"></tbody></table></div></article>
     </section>
 
     <section class="tabview" id="tab-decisions" role="tabpanel" aria-labelledby="nav-decisions" hidden>
@@ -58,14 +61,14 @@
       <div id="chef-signals" class="two-columns"></div>
       <article class="panel"><h3>Agenter som läser kryptokurser</h3><p class="caption">GAMMA: momentum för BTC och ETH. ZETA: återgång mot medelvärdet för BTC och ETH. IOTA: trend för BTC. Övriga agenter följer fortfarande syntetiska aktier/ETF.</p><div class="scroll"><table><thead><tr><th>Agent / par</th><th>Senast läst</th><th>Bedömning</th><th>Underlag och köp-/säljvillkor</th></tr></thead><tbody id="agent-report-rows"></tbody></table></div></article>
       <article class="panel"><h3>Meddelanden från CHEF</h3><p class="caption">Regelbaserade bevakningssignaler. Ingen vinstgaranti eller individuell investeringsbedömning. Skrivbordsnotiser kräver en öppen sida och webbläsarens tillåtelse; historiken sparas även när sidan är stängd.</p><div id="crypto-notices" class="scroll"></div></article>
-      <article class="panel"><div class="scroll"><table><thead><tr><th>Tid</th><th>Agent</th><th>Instrument</th><th>Signal</th><th>Förklaring</th></tr></thead><tbody id="decision-rows"></tbody></table></div></article>
+      <article class="panel paper-ui"><div class="scroll"><table><thead><tr><th>Tid</th><th>Agent</th><th>Instrument</th><th>Signal</th><th>Förklaring</th></tr></thead><tbody id="decision-rows"></tbody></table></div></article>
     </section>
 
     <section class="tabview" id="tab-agents" role="tabpanel" aria-labelledby="nav-agents" hidden>
-      <div class="page-heading"><div><p class="eyebrow">PAPER-AGENTER</p><h2>Agenter &amp; strategier</h2><p id="agents-caption">Välj en agent för innehav, resultat och senaste affärer.</p></div><span class="badge" id="agent-count">10 / 30</span></div>
+      <div class="page-heading"><div><p class="eyebrow">MARKNADSAGENTER</p><h2>Agenter &amp; strategier</h2><p id="agents-caption">Välj en agent för innehav, resultat och senaste affärer.</p></div><span class="badge" id="agent-count">10 / 30</span></div>
       <div id="agent-compact-all" class="agent-grid"></div>
       <article class="panel" id="agent-detail-panel"><div class="section-heading"><h3>Agentdetaljer</h3><label>Agent<select id="agent-select"></select></label></div><div id="agent-detail"></div></article>
-      <div class="notice">Agenterna styr endast paper-portföljen. Manuella liveorder kräver separat ägargodkännande.</div>
+      <div class="notice">Agenterna bevakar marknaden och rapporterar till CHEF. Automatisk agenthandel är inte aktiverad. Manuella Kraken-order kräver ägargodkännande.</div>
     </section>
 
     <section class="tabview" id="tab-portfolio" role="tabpanel" aria-labelledby="nav-portfolio" hidden>
@@ -86,16 +89,24 @@
     </section>
 
     <section class="tabview" id="tab-history" role="tabpanel" aria-labelledby="nav-history" hidden>
+      <div class="real-ui"><div class="page-heading"><div><p class="eyebrow">BEKRÄFTADE KRAKEN-AVSLUT</p><h2>Affärshistorik</h2><p>Datum och tid i Europe/Stockholm. Ordertid är inte samma sak som ett genomfört avslut.</p></div><button id="refresh-real-history" type="button">Uppdatera från Kraken</button></div>
+      <div id="real-history-status" class="notice"></div>
+      <article class="panel"><h3>Köpt → sålt</h3><p class="caption">Matchar JARVIS-köp mot senare försäljningar enligt FIFO, separat per par och agent. Nettot inkluderar båda sidors avgifter. Det är en historikvy, inte skattebokföring.</p><div class="scroll"><table><thead><tr><th>Ansvarig / par</th><th>Köpt · datum och tid</th><th>Sålt · datum och tid</th><th>Antal</th><th>Netto, EUR</th></tr></thead><tbody id="real-roundtrips"></tbody></table></div></article>
+      <article class="panel"><h3>Köpt, ännu inte matchat med försäljning</h3><div class="scroll"><table><thead><tr><th>Ansvarig / par</th><th>Köpt · datum och tid</th><th>Kvarvarande antal</th><th>Inköpskostnad inkl. avgift, EUR</th></tr></thead><tbody id="real-open-lots"></tbody></table></div></article>
+      <article class="panel"><h3>Alla bekräftade köp och försäljningar</h3><div class="scroll"><table><thead><tr><th>Datum och tid</th><th>Ansvarig</th><th>Par</th><th>Köp / sälj</th><th>Antal</th><th>Pris, EUR</th><th>Avgift, EUR</th><th>Avsluts-ID</th></tr></thead><tbody id="real-executions"></tbody></table></div></article>
+      <article class="panel"><h3>Försäljningar där inköpet saknas</h3><div id="real-unmatched"></div></article></div>
+      <div class="paper-ui">
       <div class="page-heading"><div><p class="eyebrow">PAPER-JOURNAL</p><h2>Historik &amp; export</h2><p>Kraken-kontots verkliga order visas separat i Kraken-konto.</p></div><div class="toolbar"><button id="export" type="button">Affärer CSV</button><button id="export-capital" type="button">Kapital CSV</button><button id="export-journal" type="button">Journal JSONL</button></div></div>
       <div class="stats small-stats"><article class="stat"><span>Köpavslut</span><strong id="buy-count">0</strong></article><article class="stat"><span>Säljavslut</span><strong id="sell-count">0</strong></article><article class="stat"><span>Avslut idag</span><strong id="today-orders">0</strong></article><article class="stat"><span>Avslut per steg</span><strong id="order-rate">0</strong></article></div>
       <article class="panel"><h3>Orderstatus</h3><p id="order-audit" class="muted"></p><div class="scroll"><table><thead><tr><th>Order-ID</th><th>Agent / instrument</th><th>Sida</th><th>Status</th><th>Antal, fyllt / begärt</th><th>Avgift</th></tr></thead><tbody id="order-status-rows"></tbody></table></div></article>
       <div class="two-columns"><article class="panel"><div class="section-heading"><h3>Meddelanden</h3><button id="mark-notices-read" type="button">Markera lästa</button></div><div id="notice-list" class="scroll"></div></article><article class="panel"><h3>Systemhändelser</h3><div id="log" class="scroll"></div></article></div>
+      </div>
     </section>
 
     <section class="tabview" id="tab-system" role="tabpanel" aria-labelledby="nav-system" hidden>
       <div class="page-heading"><div><p class="eyebrow">ANSLUTNING &amp; DRIFT</p><h2>Systemstatus</h2><p>Ansluten server, färska marknadsdata och fungerande analys visas var för sig.</p></div><button id="refresh-status" type="button">Uppdatera status</button></div>
       <div id="system-checks" class="status-grid"></div>
-      <div class="two-columns"><article class="panel"><h3>Paper-inställningar</h3><label>Uppdateringsintervall<select id="auto-pace"><option value="5000">5 sekunder</option><option value="30000">30 sekunder</option></select></label><label class="check-label"><input id="market-auto" type="checkbox" checked>Följ börstid för syntetiska aktier</label><p id="pace-info" class="caption"></p><p class="caption">Krypto använder alltid avslutade femminutersstaplar för strategibeslut. Agenterna använder ingen privat Kraken-nyckel.</p></article><article class="panel"><h3>Aktuell session</h3><dl class="facts"><div><dt>Aktiv paper-körtid</dt><dd id="active-time">—</dd></div><div><dt>Rapportdag</dt><dd id="day-index">—</dd></div><div><dt>Dagstatus</dt><dd id="day-status">—</dd></div><div><dt>Avslutade dagar</dt><dd id="days-closed">—</dd></div><div><dt>Steg denna dag</dt><dd id="day-steps">—</dd></div></dl><p id="day-history" class="caption"></p></article></div>
+      <div class="two-columns paper-ui"><article class="panel"><h3>Paper-inställningar</h3><label>Uppdateringsintervall<select id="auto-pace"><option value="5000">5 sekunder</option><option value="30000">30 sekunder</option></select></label><label class="check-label"><input id="market-auto" type="checkbox" checked>Följ börstid för syntetiska aktier</label><p id="pace-info" class="caption"></p><p class="caption">Krypto använder alltid avslutade femminutersstaplar för strategibeslut. Agenterna använder ingen privat Kraken-nyckel.</p></article><article class="panel"><h3>Aktuell session</h3><dl class="facts"><div><dt>Aktiv paper-körtid</dt><dd id="active-time">—</dd></div><div><dt>Rapportdag</dt><dd id="day-index">—</dd></div><div><dt>Dagstatus</dt><dd id="day-status">—</dd></div><div><dt>Avslutade dagar</dt><dd id="days-closed">—</dd></div><div><dt>Steg denna dag</dt><dd id="day-steps">—</dd></div></dl><p id="day-history" class="caption"></p></article></div>
     </section>
 
     <section class="tabview" id="tab-exchange" role="tabpanel" aria-labelledby="nav-exchange" hidden>
@@ -110,7 +121,7 @@
       <article class="panel"><details><summary>Anslut ditt konto lokalt</summary><p>Kör i en andra Ubuntu-terminal i projektmappen:</p><pre><code>python3 -m backend.ops configure-kraken</code></pre><p>Nycklar skrivs dolt och lagras lokalt med rättighet 0600. Klistra aldrig in API-hemligheter här på sidan eller i chatten. Använd en dedikerad spot-nyckel utan uttagsrättigheter.</p><p>Kontrollera först konto och validering. Liveorder är avstängda vid vanlig start. För att uttryckligen tillåta manuella, ägargodkända order, stoppa servern och starta:</p><pre><code>JARVIS_KRAKEN_LIVE=1 python3 -m backend.server</code></pre><p>Webbsidan kan inte ändra startflaggan. API-nyckelns orderrättigheter måste finnas för validering/orderläggning. Inga funktioner för riktiga uttag finns.</p></details></article>
     </section>
   </main>
-  <footer>JARVIS v0.6 · Regelbaserad analys · Paper-kapital i SEK · Manuella Kraken-order i EUR · Aktier/ETF är syntetiska</footer>
+  <footer>JARVIS v0.6 · Regelbaserad analys · Konto och bekräftade affärer i EUR · Ingen automatisk agenthandel · Svenska aktier ej anslutna</footer>
 </div>
 <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 </body>

@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory() as tmp:
         e.submit('gamma','BTC-SIM','SELL',1000)
         e.sweep('test-profit')
     store.change('test-profit',seed_profit)
-    runtime = Runtime(store, Market())
+    runtime = Runtime(store, Market(),paper_enabled=True)
     private=Private()
     runtime.exchange=LiveService(store,Public(),private,enabled=True)
     server = make_server(runtime, 0)
