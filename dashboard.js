@@ -37,7 +37,7 @@ function render(){renderOrderAudit();const orders=state.orderHistory||[];const b
 
 function renderCapital(){const $=id=>document.getElementById(id);if(!$('agent-count'))return;$('agent-count').textContent=agents.length+' / '+MAX_AGENTS;$('agent-next').textContent=agents.length>=MAX_AGENTS?'Tak nått':(expansionNext(equity())===null?'Maxnivå':fmt(expansionNext(equity())));$('owner-capital').textContent=fmt(state.ownerNetDeposits);$('investment-result').textContent=fmt(totalEquity()-state.ownerNetDeposits);$('owner-ledger').innerHTML='<h3>Ägartransaktioner</h3><table><thead><tr><th>Dag</th><th>Typ</th><th>Belopp</th></tr></thead><tbody>'+state.ownerMovements.slice(0,40).map(x=>'<tr><td>'+x.day+'</td><td>'+x.type+'</td><td>'+fmt(x.amount)+'</td></tr>').join('')+'</tbody></table>'}
 function renderAgentDetail(){const select=document.querySelector('#agent-select');if(!select)return;if(select.options.length!==agents.length){const old=select.value;select.innerHTML=agents.map(a=>`<option value="${a.id}">${a.name}</option>`).join('');if(agents.some(a=>a.id===old))select.value=old;}const a=agents.find(a=>a.id===select.value)||agents[0];const positions=assets.filter(x=>(state.positions[x.id]?.owners[a.id]||0)>0);const history=(state.orderHistory||[]).filter(x=>x.agent===a.id).slice(0,40);document.querySelector('#agent-detail').innerHTML=`<div class="detailgrid"><div class="mini">Strategi<br><b>${a.strategy}</b></div><div class="mini">Tilldelad positionsbudget<br><b>${fmt(a.budget)}</b></div><div class="mini">Aktuellt innehav<br><b>${fmt(agentValue(a.id))}</b></div><div class="mini">Realiserat resultat<br><b>${fmt(state.agentRealized[a.id])}</b></div><div class="mini">Status<br><b>${state.agentStatus[a.id]}</b></div><div class="mini">Avslutade affärer<br><b>${state.agentTrades[a.id]}</b></div></div><h3>Innehav</h3><table><thead><tr><th>Instrument</th><th>Antal</th><th>Marknadsvärde</th><th>Orealiserat P/L</th></tr></thead><tbody>${positions.map(x=>{const qty=state.positions[x.id].owners[a.id],cost=state.ownerCost[a.id][x.id]||0;return `<tr><td>${x.id}</td><td>${qty.toFixed(5)}</td><td>${fmt(qty*last(x.id))}</td><td>${fmt(qty*last(x.id)-cost)}</td></tr>`}).join('')||'<tr><td colspan="4">Inga öppna positioner</td></tr>'}</tbody></table><h3>Senaste order</h3><table><thead><tr><th>Dag/steg</th><th>Instrument</th><th>Order</th><th>Belopp</th><th>Avgift</th><th>Resultat</th></tr></thead><tbody>${history.map(x=>`<tr><td>${x.day} / ${x.tick}</td><td>${x.id}</td><td>${x.side}</td><td>${fmt(x.amount)}</td><td>${fmt(x.fee)}</td><td>${x.pnl===null?'—':fmt(x.pnl)}</td></tr>`).join('')||'<tr><td colspan="6">Ingen orderhistorik ännu</td></tr>'}</tbody></table>`}
-function renderLedger(){const el=document.querySelector('#ledger');if(!el)return;el.innerHTML=`<div class="detailgrid"><div class="mini">Tradingportfölj<br><b>${fmt(equity())}</b></div><div class="mini">Kontanter tillgängliga<br><b>${fmt(state.cash)}</b></div><div class="mini">Låst sparkonto<br><b>${fmt(state.vault)}</b></div><div class="mini">Dagar till veckofördelning<br><b>${5-state.daysSinceSweep}</b></div></div><h3>Vinstöverföringar</h3><table><thead><tr><th>Dag</th><th>Typ</th><th>Belopp</th></tr></thead><tbody>${state.vaultMovements.map(x=>`<tr><td>${x.day??'—'} / ${x.tick}</td><td>${x.type}</td><td>${fmt(x.amount)}</td></tr>`).join('')||'<tr><td colspan="3">Inga överföringar</td></tr>'}</tbody></table><p class="muted">Nästa ordinarie avsättning sker vid femte avslutade handelsdagen sedan senaste överföring. Endast realiserad nettovinst över tidigare realiserad topp och tillgängliga kontanter används.</p>`}
+function renderLedger(){const el=document.querySelector('#ledger');if(!el)return;el.innerHTML=`<div class="detailgrid"><div class="mini">Tradingportfölj<br><b>${fmt(equity())}</b></div><div class="mini">Kontanter tillgängliga<br><b>${fmt(state.cash)}</b></div><div class="mini">Låst sparkonto<br><b>${fmt(state.vault)}</b></div><div class="mini">Dagar till veckofördelning<br><b>${7-state.daysSinceSweep}</b></div></div><h3>Vinstöverföringar</h3><table><thead><tr><th>Dag</th><th>Typ</th><th>Belopp</th></tr></thead><tbody>${state.vaultMovements.map(x=>`<tr><td>${x.day??'—'} / ${x.tick}</td><td>${x.type}</td><td>${fmt(x.amount)}</td></tr>`).join('')||'<tr><td colspan="3">Inga överföringar</td></tr>'}</tbody></table><p class="muted">Nästa ordinarie avsättning sker vid sjunde kalenderdagen; manuella extraöverföringar flyttar inte ordinarie datum. Endast realiserad nettovinst över tidigare realiserad topp och tillgängliga kontanter används.</p>`}
 
 
 let currentTab='overview';
@@ -67,6 +67,11 @@ function applySnapshot(snapshot, sequence){
  document.querySelector('#crypto-agent-count').textContent=agents.filter(a=>a.ids.every(id=>id.endsWith('-SIM'))).length+' kryptoagenter';
  document.querySelector('#stock-agent-count').textContent=agents.filter(a=>!a.ids.some(id=>id.endsWith('-SIM'))).length+' aktie-/ETF-agenter';
  document.querySelector('#clock').textContent='Serversteg '+state.tick;
+ document.querySelector('#step').disabled=state.dayClosed&&!state.canOpenDay;
+ document.querySelector('#run').disabled=state.dayClosed&&!state.canOpenDay;
+ document.querySelector('#day-status').textContent=state.dayClosed?'Avslutad · nästa start nästa Stockholm-datum':'Pågående';
+ document.querySelector('#next-sweep-date').textContent=state.nextSweepDate||'Efter sju avslutade kalenderdagar';
+ document.querySelector('#stock-status').textContent='Syntetiska aktier/ETF · Nasdaq Stockholm-kalender 2025–2027';
  document.querySelector('#pace-info').textContent='Kraken pollas högst var 5:e sekund. Aktier och ETF är syntetiska. Alla order är paper trading.';
  document.querySelector('#run').textContent=state.running?'Pausa servermotor':'Starta servermotor';
  document.querySelector('#connection').textContent='Ansluten · servern äger kapital och beslut';
@@ -79,9 +84,17 @@ async function poll(){
  finally{pollInFlight=false;}
 }
 async function command(name,data={}){
+ let approval=null;
+ if(name==='approve'||name==='release'){
+  const instruction=name==='release'?'python3 -m backend.ops approve release --amount '+data.amount:'python3 -m backend.ops approve resume';
+  approval=prompt('Skapa en engångskod i Ubuntu-terminalen med:\n'+instruction+'\nKlistra sedan in koden här (giltig 120 sekunder).');
+  if(!approval)return;
+ }
  if(pending&&name!=='stop')return;
  pending++;const seq=++requestSequence;
- try{const response=await fetch('/api/commands/'+name,{method:'POST',headers:{'Content-Type':'application/json','X-Jarvis-Client':'dashboard','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify(data)});const snapshot=await response.json();if(!response.ok)throw Error(snapshot.error||'HTTP '+response.status);applySnapshot(snapshot,seq);}
+ const headers={'Content-Type':'application/json','X-Jarvis-Client':'dashboard','Idempotency-Key':crypto.randomUUID()};
+ if(approval)headers['X-Jarvis-Approval']=approval;
+ try{const response=await fetch('/api/commands/'+name,{method:'POST',headers,body:JSON.stringify(data)});const snapshot=await response.json();if(!response.ok)throw Error(snapshot.error||'HTTP '+response.status);applySnapshot(snapshot,seq);}
  catch(error){document.querySelector('#connection').textContent=error.message;alert(error.message);}
  finally{pending--;}
 }
@@ -102,3 +115,10 @@ for(const id of ['reset','seed','speed','notify']){document.getElementById(id).d
 for(const option of document.querySelectorAll('#auto-pace option'))if(Number(option.value)<5000)option.remove();
 document.querySelector('#export').onclick=()=>{if(!state)return;const quote=v=>'"'+String(v).replaceAll('"','""')+'"';const rows=[['order_id','agent','instrument','side','quantity','price_SEK','fee_SEK','pnl_SEK'],...state.orderHistory.map(o=>[o.orderId,o.agent,o.id,o.side,o.qty,o.price,o.fee,o.pnl??''])];const url=URL.createObjectURL(new Blob(['\ufeff'+rows.map(r=>r.map(quote).join(',')).join('\n')],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='jarvis-paper-orders.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 poll();setInterval(poll,2000);
+
+function downloadExport(path){const a=document.createElement('a');a.href=path;a.download=path.split('/').at(-1);a.click();}
+document.querySelector('#export').onclick=()=>downloadExport('/api/export/trades.csv');
+document.querySelector('#export-capital').onclick=()=>downloadExport('/api/export/capital.csv');
+document.querySelector('#export-journal').onclick=()=>downloadExport('/api/export/journal.jsonl');
+
+document.querySelector('#endday').onclick=()=>{if(confirm('Avsluta dagens bokföring? Handel kan startas igen först nästa Stockholm-datum.'))command('close-day');};

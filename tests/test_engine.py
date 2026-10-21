@@ -1,6 +1,6 @@
 import math
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from backend.engine import Engine, FEE, clock, new_state
 
@@ -12,6 +12,7 @@ class EngineTests(unittest.TestCase):
         self.e = Engine(new_state())
         self.e.s['marketAuto'] = False
         self.e.now = NOW
+        self.e.s['paperBroker'] = dict(testFaults=True, spreadBps=0, slippageBps=0)
         self.e.s['prices']['BTC-SIM'] = [600000]
         self.e.s['prices']['ETH-SIM'] = [25000]
 
@@ -40,6 +41,7 @@ class EngineTests(unittest.TestCase):
         e = self.e
         e.capital(100000, 'deposit')
         for _ in range(60):
+            e.s['tick'] += 1
             for a in e.agents():
                 for symbol in a['ids']:
                     e.submit(a['id'], symbol, 'BUY', 1e6)
@@ -61,6 +63,7 @@ class EngineTests(unittest.TestCase):
         for a in e.agents()[10:]:
             e.init_agent(a, False)
         for _ in range(12):
+            e.s['tick'] += 1
             for a in e.agents():
                 for symbol in a['ids']:
                     if symbol.endswith('-SIM'):
@@ -73,7 +76,7 @@ class EngineTests(unittest.TestCase):
         e.s['orderSeq'] = 6
         o = e.submit('gamma', 'BTC-SIM', 'BUY', 650)
         self.assertEqual(o['status'], 'PARTIAL')
-        self.assertEqual(e.submit('gamma', 'BTC-SIM', 'BUY', 100)['status'], 'REJECTED')
+        self.assertEqual(e.submit('gamma', 'BTC-SIM', 'BUY', 100, intent_id='second-intent')['status'], 'REJECTED')
         e.s['prices']['BTC-SIM'].append(6000000)
         e.fill(o, next(a for a in e.agents() if a['id'] == 'gamma'))
         self.assertEqual(o['status'], 'CANCELLED')
@@ -157,6 +160,7 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(e.review_shadow(q, True))
         e.s['approvalPending'] = True
         cash = e.s['cash']
+        e.operator = 'test-owner'
         e.command('approve', {})
         self.assertFalse(e.s['halt'])
         self.assertEqual(e.s['cash'], cash)
@@ -169,14 +173,16 @@ class EngineTests(unittest.TestCase):
         e.s['prices']['BTC-SIM'].append(900000)
         e.submit('gamma', 'BTC-SIM', 'SELL', 1000)
         profit = e.s['realizedTotal']
-        for _ in range(5):
+        for _ in range(7):
             e.close_day()
+            e.now += timedelta(days=1)
             e.open_day()
         self.assertAlmostEqual(e.s['vault'], profit*.2)
         before = e.s['vault']
         self.assertEqual(e.sweep('test')[1], 0)
         with self.assertRaises(ValueError):
             e.command('release', dict(amount=1))
+        e.operator = 'test-owner'
         e.command('release', dict(amount=1, approved=True))
         self.assertAlmostEqual(e.s['vault'], before-1)
         self.assertTrue(e.audit())
@@ -201,8 +207,10 @@ class EngineTests(unittest.TestCase):
     def test_expansion_only_after_profitable_five_days_and_quarantines(self):
         e = self.e
         e.capital(20000, 'deposit')
+        e.now = datetime(2026, 10, 19, 12, tzinfo=timezone.utc)
         for _ in range(4):
             e.close_day()
+            e.now += timedelta(days=1)
             e.open_day()
         self.assertEqual(e.s['agentCount'], 10)
         # Valid realized paper gain for the fifth report.

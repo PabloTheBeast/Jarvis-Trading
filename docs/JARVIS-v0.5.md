@@ -1,5 +1,8 @@
 # Analys och utvecklingsplan: JARVIS v0.5
 
+Historiskt dokument för första v0.5-leveransen. Aktuellt beteende och återstående arbete
+finns i [v0.5.1-checklistan](CHECKLIST-v0.5.1.md); flera begränsningar nedan är nu åtgärdade.
+
 ## Granskad utgångspunkt
 
 Hela projektet vid d46533d består av README.md (två rader) och index (2).html.

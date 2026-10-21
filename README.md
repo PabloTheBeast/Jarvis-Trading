@@ -1,120 +1,152 @@
-# JARVIS Trading v0.5
+# JARVIS Trading v0.5.1
 
-Enbart **paper trading**. Python kör strategiagenterna, JARVIS CHEF, ordermotorn,
-riskkontrollerna och kapitaljournalen oberoende av webbläsaren. Den befintliga
-svenska dashboarden med fem flikar använder samma server för data och kontroller.
+**Enbart paper trading.** Python kör agenter, CHEF, riskkontroller, ordermotor och
+kapitalbokföring utan en öppen webbläsare. Den svenska dashboardens fem flikar finns kvar.
 
-## Kom igång
+## Starta på Windows med Ubuntu/WSL
 
-Krav: Python 3.12+ på Linux (inklusive SQLite och tidszonsdata). Inga Python-paket,
-API-nycklar, Node-paket eller Kraken-konton behövs för backend.
+I Ubuntu-terminalen, från projektmappen:
 
 ```bash
-python -m unittest discover -s tests -v
-python -m backend.server
+python3 -m unittest discover -s tests -v
+python3 -m backend.server
 ```
 
-Öppna serverns rot på port 8000 på din egen dator och välj **Starta servermotor**.
-Första starten är pausad med 10 000 SEK i simulerat kapital. Därefter fortsätter
-motorn när fliken stängs, så länge Python-processen och datorn körs.
-Start-/stoppstatus återställs från databasen efter en processomstart.
-Molnuppgifter kan stoppa processer när själva uppgiften avslutas; detta är ingen
-garanti om permanent drift.
+Öppna serverns rot på port 8000 i Windows-webbläsaren och välj **Kör 1 steg** eller
+**Starta servermotor**. Låt Python-processen köra. Servern är avsiktligt bara åtkomlig
+på loopback. Molnserverns loopback nås inte från en annan dator utan en tunnel.
 
-Öppna inte HTML-filen direkt: den behöver API:t. Servern binder enbart till loopback.
-Använd en SSH-tunnel vid fjärrutveckling. Tjänsten saknar fleranvändarautentisering
-och ska inte exponeras direkt på internet.
+Krav: Python 3.12+ på Linux/WSL, SQLite, tidszonsdata. Inga pip-/npm-paket eller
+Kraken-nycklar krävs. Node behövs bara för JS-syntaxkontrollen.
+
+Vid uppgradering: stoppa den gamla servern med Ctrl+C innan du byter kodbranch.
+Behåll `.jarvis/`. Befintlig v0.5-databas säkerhetskopieras automatiskt före
+schema 2-migreringen. Historik och agenter behålls; inga pengar nollställs.
+Historiska felaktigt dubblerade dagsrapporter bevaras men räknas inte mot ny expansion.
+Migreringen avrundar gamla flyttal till nano-SEK och journalför eventuell minimal
+avstämningsjustering. För stor differens stoppar uppgraderingen.
+
+Efter **varje processomstart**, även efter en krasch, är motorn pausad. Starta den
+uttryckligen igen. En global riskpaus ligger kvar tills skuggtest och ägargodkännande
+är klara. Övervakningstjänsten får återstarta processen men inte återuppta handeln.
+
+## Data och paper-exekvering
+
+- Kraken publika BTC/ETH-tickers och orderdjup i EUR; ECB:s daterade dagliga
+  EUR/SEK-referenskurs används för SEK-redovisning. Ingen verklig valutaväxling sker.
+- Nya marknadssnapshots hämtas högst var femte sekund. Samma snapshot får inte
+  skapa flera handelssteg; upprepade manuella klick kan inte påskynda skuggtest.
+- Paper-köp använder asks, paper-försäljningar bids, tillgänglig volym i hämtat djup
+  och 5 punkters (bps) extra adverse slippage. Djupet delas mellan agenternas order
+  i samma snapshot. Otillräcklig volym kan ge delavslut; order löper ut efter 60 sekunder.
+- Aktier/ETF är fortfarande **syntetiska**. De använder en uttrycklig modell med
+  10 bps spread och 5 bps extra slippage. Krypto faller aldrig tyst tillbaka till den modellen.
+- Varje order har ett beständigt intent-ID och order-ID, varje avslut ett fill-ID.
+  Samma strategiavsikt återanvänds säkert även efter en omstart. En redan avslutad
+  order exekveras inte igen. Testavvisningar/delavslut är avstängda i vanlig drift.
+- Misslyckad datahämtning innebär inget handelssteg eller avslut. Båda kryptoparen,
+  giltigt djup och giltig FX-kurs krävs. Crossed books, spread över 5 % och ogiltiga
+  priser avvisas. Snapshot får inte vara äldre än 30 sekunder när steget tillämpas.
+- ECB-kursen cachas en timme och får vara högst sju kalenderdagar gammal.
+
+HTTPS krävs till `api.kraken.com` och `www.ecb.europa.eu`. TLS-verifiering behålls.
+Inga privata Kraken-anrop eller funktioner för verklig orderläggning finns.
+
+## Risk, datum och kapital
+
+- Köpgränser: högst 70 % totalt investerat, 25 % per instrument, 40 % korrelerad
+  exponering, agentbudget och dynamiskt ordertak högst 2 000 SEK. Alla delavslut
+  kontrolleras igen. Ingen belåning/blankning. Simulerad avgift 0,15 %.
+- CHEF: stop-loss vid 5 %, karantän efter tre förlustavslut eller 8 % budgetförlust,
+  global köp-/riskpaus vid 10 % drawdown. Befintliga positioner behålls; sälj tillåts.
+- Återstart: minst 40 steg före granskning, positivt skuggnetto, minst fem globala
+  skuggavslut, minst 50 % vinster, högst 100 SEK skuggdrawdown och under 10 % faktisk
+  drawdown. Ägargodkännande krävs. Enskild karantän har motsvarande 3-avsluts-/40-SEK-krav.
+- Dagar är **unika Stockholm-datum**. Manuell stängning låser dagen tills nästa datum.
+  Ett datum kan inte bokföras flera gånger. Inga 100-stegsdagar används längre.
+- Veckofördelning: efter **sju kalenderdagar**, 20 % av ny realiserad nettovinst efter
+  tidigare förluster. Uttag och överföringar använder bara kontanter som inte är
+  reserverade för köp. En extra manuell vinstfördelning flyttar inte veckodatumet.
+- Expansion: granskning efter varje grupp om **fem unika avslutade börsdagar**, positivt
+  netto på dessa dagar, tillräckligt kapital och ingen riskpaus. Högst två nya agenter,
+  max 30; alla börjar i skuggläge. Helgdagar/helger räknas inte som börsdagar.
+- Kalender: Nasdaq Stockholm-regler för 2025–2027, inklusive helgdagar, halvdagar
+  till 13:00 och svensk sommartid. Senare år stängs för syntetiska aktier i autoläge
+  tills kalendern granskats. Krypto kör 24/7. Se kalenderkällor i checklistan.
+- Kontanter, skyddat kapital, avgifter, kostnadsbas och realiserat resultat bokförs
+  i **heltals-nano-SEK**. Konvertering sker med Decimal; dashboardtal är projektioner.
+  Insättningar är inte vinster. Skyddat konto är ett internt paper-saldo, inget bankkonto.
+
+## Godkänn återstart eller frigör sparkapital
+
+Ett vanligt API-fält med `approved: true` räcker inte. Skapa en ägarsignerad engångskod
+i en **andra Ubuntu-terminal**, från samma projektmapp och som samma Ubuntu-användare:
 
 ```bash
-python -m backend.server --port 8001 --db /valfri/sökväg/paper.sqlite3
+# Efter att CHEF:s globala skuggtest är godkänt:
+python3 -m backend.ops approve resume
+
+# Exempel: återför exakt 100 simulerade SEK från skyddat konto:
+python3 -m backend.ops approve release --amount 100
 ```
 
-SQLite, WAL och låsfil ligger normalt i ignorerade `.jarvis/`. En process per databas.
-Varje lyckat kommando och handelssteg sparar tillstånd och journal i samma transaktion.
-Stoppa servern före filbaserad backup eller använd SQLite:s backup-API.
-Radera aldrig databasen för att uppdatera programmet.
+Klicka sedan på motsvarande knapp i dashboarden och klistra in koden när den efterfrågas.
+Koden gäller i 120 sekunder, för angiven åtgärd och exakt belopp, och kan användas en gång.
+Godkännare, tid, åtgärd, belopp och godkännande-ID journalförs. Koden sparas inte i loggar.
 
-## Marknadsdata och order
+Ägarnyckeln skapas lokalt med filrättighet 0600 bredvid databasen och är git-ignorerad.
+Detta är ett lokalt ägarskydd, inte publik fleranvändarautentisering. Samma OS-användare
+kan läsa nyckeln. Exponera inte tjänsten på internet och dela inte nyckel eller koder.
+Vid annan databas används `--db /sökväg/paper.sqlite3` **före** `approve`.
 
-- BTC och ETH: Krakens **publika EUR-tickers**, omräknade till SEK med ECB:s
-  daterade dagliga EUR/SEK-referenskurs. Kraken erbjuder inte de önskade direkta
-  SEK-paren. FX-kursen visas i API:t och referensdatum i dashboarden.
-- `BTC-SIM`/`ETH-SIM` behålls som interna ID:n för kompatibilitet. Kurserna är
-  marknadsdata; innehav, avgifter och alla order är simulerade.
-- Aktier/ETF är uttryckligen **syntetiska**, inte riktiga svenska värdepapper.
-  Autoläge följer vardagar 09:00–17:30 Europe/Stockholm; helgdagar/halvdagar saknas.
-  Avmarkerat autoläge tillåter manuella syntetiska aktiesteg även utanför börstid.
-- Högst en Kraken-hämtning per fem sekunder, även vid manuella steg. Tillåtna
-  autointervall är 5 eller 30 sekunder. ECB-kursen cachas en timme och får vara högst
-  sju kalenderdagar gammal. Referenskursen är ingen exekverbar valutakurs.
-- Vid saknade/ogiltiga/otillgängliga data sker **inget steg och inga avslut**, även för
-  syntetiska aktier. Status visar fel och automatiken försöker igen efter intervallet.
-  Ingen tyst övergång till syntetiska kryptopriser.
-- Inga privata Kraken-anrop eller funktioner för verklig orderläggning finns.
+## Export, backup och drift
 
-HTTPS krävs till `api.kraken.com` och `www.ecb.europa.eu`; Git/PR använder GitHub.
-TLS-verifiering behålls. Inga hemligheter behövs.
+Dashboardens Historik har export av affärer, full kapitalhistorik och JSONL-journal.
+Kapitalexporten innehåller även köp-/säljkontantrörelser, avgifter, insättningar, uttag,
+vinstskydd och ägargodkännanden. Gamla poster utan datum/saldo märks uttryckligen som äldre data.
 
-## Risk och redovisning
+```bash
+python3 -m backend.ops backup /valfri/ny-backup.sqlite3
+python3 -m backend.ops check
+```
 
-Originalets regler behålls: högst 70 % investerat, 25 % per instrument, 40 % i en
-korrelerad grupp (korrelation över 0,75, minst 12 förändringar), agentbudget,
-dynamiskt ordertak högst 2 000 SEK, avgift 0,15 %, ingen belåning eller blankning.
-Köp begränsas vid orderläggning **och vid varje delavslut**. Prisrörelser kan ändra
-exponeringen efter avslut; gränserna förbjuder ytterligare köp, inte marknadsrörelser.
+Backup använder SQLite:s backup-API, inkluderar WAL och integritetskontrolleras.
+Befintliga backupfiler skrivs inte över. För återställning: stoppa servern och starta
+med `python3 -m backend.server --db /valfri/ny-backup.sqlite3`. En ny lokal ägarnyckel
+skapas om ingen finns vid backupdatabasen; kopiera inte gamla engångskoder.
 
-CHEF försöker sälja agentinnehav vid 5 % förlust. Tre förlustavslut eller 8 % förlust
-mot agentens riskbudget leder till karantän. Skugghandel påverkar inte huvudkapitalet
-eller delat erfarenhetsminne. Granskning efter minst 40 steg, därefter var 20:e steg:
-minst tre affärer, positivt netto, minst 50 % vinster, högst 40 SEK skuggdrawdown.
+Data ligger normalt i `.jarvis/`. `system.jsonl` innehåller tidsstämplade strukturerade
+loggar, kommando-/request-ID och felstatus, med rotation vid 2 MB och fem backupfiler.
+SQL-journalen är append-only genom triggers; den är inte en kryptografisk revisionslogg.
 
-Global paus vid 10 % drawdown stoppar nya köp och avbryter väntande köp.
-Säljorder tillåts fortfarande. Globalt skuggtest kräver minst fem affärer, positivt
-netto, minst 50 % vinster och högst 100 SEK skuggdrawdown. Manuell återstart krävs
-och drawdown måste vara **under 10 %**, så godkännandet inte omedelbart återutlöser
-pausen. Detta rättar originalets motstridiga återstartsgräns på 12 %.
-Nödstopp stoppar automatiken och avbryter alla väntande order, även efter dygnsskifte.
-Ingen återstart sker automatiskt nästa dag.
-
-Ägarinsättningar är aldrig handelsvinster. Var femte avslutade dag flyttas 20 % av ny
-realiserad nettovinst över tidigare avsatt vinsttopp, begränsat till fria kontanter,
-till skyddat konto. Manuell återföring kräver uttryckligt godkännande.
-Högst två nya agenter var femte lönsamma rapportdag, enligt ursprungliga kapitalnivåer,
-upp till 30; de börjar i karantän.
+Valfri systemd-användartjänst för Ubuntu/WSL med systemd finns i `deploy/jarvis-paper.service`.
+Den förutsätter projektet i `~/Jarvis-Trading`; ändra sökvägen vid annan placering.
+Installationskommandon finns i checklistan. Datorn/WSL måste fortfarande vara igång.
 
 ## Tester och API
 
 ```bash
-python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 node --check dashboard.js
+# Valfritt: Playwright + installerad Chromium
+CHROMIUM_PATH=/usr/bin/chromium python3 tests/browser_smoke.py
 ```
 
-Tester kör utan extern trafik och täcker strategier, avgifter, ägarfördelning,
-delavslut, riskgränser, korrelation, karantän, återstart, vinstskydd, expansion,
-marknadsschema, Kraken/ECB-fel, SQLite-återställning, kommandorepriser, samtidighet
-och serverdrift utan webbläsare. Testet med 500 steg verifierar kapitalavstämning.
-Node behövs bara för JS-syntaxkontrollen, inte för att starta appen.
+Sviten testar bland annat hårda krascher före/efter commit, misslyckad journalskrivning,
+backup/restore, migration, veckoregler, dubbletter, exakt pengaräkning och åtta simulerade dygn.
+Browser-testet verifierar även signerat uttag och exportnedladdningar.
 
-Valfritt verkligt Chromium-test (kräver Playwright och installerad Chromium):
+API: `GET /api/state`, `GET /api/health`, `GET /api/export/trades.csv`,
+`GET /api/export/capital.csv`, `GET /api/export/journal.jsonl`.
+Kommandon skickas till `POST /api/commands/<namn>` med JSON, `X-Jarvis-Client: dashboard`
+och en unik `Idempotency-Key`. Återanvänd samma nyckel bara för en retry av samma avsikt.
+`approve` och `release` kräver dessutom `X-Jarvis-Approval`; `release` kräver `approved: true`.
 
-```bash
-CHROMIUM_PATH=/usr/bin/chromium python tests/browser_smoke.py
-```
+## Återstående gränser
 
-`GET /api/state` ger dashboardens tillstånd, agenter, instrument och `paperOnly`.
-`GET /api/health` visar processtatus och separat marknadsdatastatus; processhälsa
-innebär inte att marknadsdata fungerar. `POST /api/commands/<namn>` tar ett JSON-objekt,
-`X-Jarvis-Client: dashboard` och en unik `Idempotency-Key`. Återanvänd samma nyckel
-vid transportretry av samma kommando; ett annat innehåll med samma nyckel avvisas.
-Tillåtna kommandon: `step`, `start`, `stop`, `pause`, `approve`, `close-day`, `sweep`,
-`deposit`, `withdraw`, `release`, `settings`, `read-notices`, `save`.
-`release` kräver `approved: true`. Inget publikt order- eller livehandels-API finns.
-
-## Begränsningar och utvecklingsplan
-
-Se [analys och plan för v0.5](docs/JARVIS-v0.5.md) samt [ändringslogg](CHANGELOG.md).
-Gamla localStorage-data skrivs inte över och importeras inte automatiskt.
-Återställning, scenariobyte och webbläsaraviseringar är avstängda i serverläget;
-spara/exportera gammal historik i originalversionen före en eventuell framtida import.
-Agenterna är regelbaserade prototyper med adaptiv storleksjustering, inte tränade
-språkmodeller. Resultaten visar inte förväntad avkastning.
+Se [checklista och verifiering](docs/CHECKLIST-v0.5.1.md). Livehandel är avstängd.
+Verklig kontoavstämning, börsens avgifts-/lotregler, nätverksfel under faktisk
+orderläggning och verkliga uttag måste införas och testas separat innan livebruk.
+Normalisering/paginering av hela historiken och långvarig drift under last återstår.
+Gamla localStorage-data importeras inte automatiskt. Regelbaserade agenter innebär
+ingen garanti om lönsamhet.

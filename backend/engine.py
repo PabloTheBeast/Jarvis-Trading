@@ -1,11 +1,15 @@
-"""Browser-independent port of the original rule-based paper engine.
+"""Browser-independent paper orchestration.
 
-The state schema intentionally matches the existing dashboard. Financial values
-use Python doubles, as in the original JS; reconciliation uses explicit tolerances.
+Signals, order lifecycle, simulated broker and exact integer money ledger live in
+separate components. The public state projection preserves the dashboard schema.
 """
 import math
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, timezone, timedelta
+from .calendar import clock, session
+from .strategies import signal
+from .orders import OrderManager
+from .broker import PaperBroker
+from .accounting import Ledger
 
 INITIAL, FEE = 10000, .0015
 ASSETS = [
@@ -34,11 +38,6 @@ def crypto(symbol):
     return symbol in ('BTC-SIM', 'ETH-SIM')
 
 
-def clock(now):
-    local = now.astimezone(ZoneInfo('Europe/Stockholm'))
-    return local.date().isoformat(), local.weekday() < 5 and 540 <= local.hour * 60 + local.minute < 1050
-
-
 def new_state():
     s = dict(tick=0, cash=INITIAL, vault=0, ownerNetDeposits=INITIAL,
              ownerMovements=[], positions={}, prices={a['id']: ([] if crypto(a['id']) else [a['p']]) for a in ASSETS},
@@ -54,7 +53,8 @@ def new_state():
              daysSinceSweep=0, seedValue=42, rngState=42, agentCount=10,
              quarantine={}, shadow={}, entryModes={}, riskEvents=[], running=False,
              marketData=dict(source='Kraken EUR / ECB SEK', status='waiting', at=None, error=None),
-             reportDate=None)
+             reportDate=None, schemaVersion=2, closedDates=[], expansionDates=[],
+             lastExpansionReview=0, intentOrders={}, approvals=[], capitalHistory=[], stopGeneration=0, paperBroker=dict(spreadBps=10, slippageBps=5, testFaults=False))
     for key in ('agentSpend', 'agentRealized', 'agentLosses', 'agentHalt', 'ownerCost',
                 'agentStatus', 'agentTrades', 'agentWins', 'agentGrossProfit',
                 'agentGrossLoss', 'agentPeak', 'agentMaxDD', 'agentEquityHist', 'riskBaseline'):
@@ -62,6 +62,7 @@ def new_state():
     engine = Engine(s)
     for a in engine.agents():
         engine.init_agent(a, False)
+    Ledger(engine).movement('OPENING', 10000*1_000_000_000, 0, 'Initial paper capital')
     return s
 
 
@@ -69,6 +70,8 @@ class Engine:
     def __init__(self, state):
         self.s = state
         self.now = datetime.now(timezone.utc)
+        self.operator = None
+        self.approval_id = None
 
     def agents(self):
         scale = max(.4, min(5, self.equity() / INITIAL)) * 10 / self.s['agentCount']
@@ -111,7 +114,7 @@ class Engine:
         return sum(p['owners'].get(aid, 0) * self.last(symbol) for symbol, p in self.s['positions'].items())
 
     def log(self, who, msg):
-        self.s['logs'].insert(0, dict(tick=self.s['tick'], agent=who, msg=msg))
+        self.s['logs'].insert(0, dict(tick=self.s['tick'], agent=who, msg=msg, at=self.now.isoformat(), level='INFO'))
         del self.s['logs'][300:]
 
     def announce(self, msg):
@@ -154,128 +157,16 @@ class Engine:
         return crypto(symbol) or not self.s['marketAuto'] or clock(self.now)[1]
 
     def buy_room(self, a, symbol):
-        s, eq = self.s, self.equity()
-        pending = [o for o in s['orders'] if o['status'] in ('NEW', 'PARTIAL') and o['side'] == 'BUY']
-        def reserved(predicate):
-            return sum((o['requestedQty']-o['filledQty'])*self.last(o['instrument']) for o in pending if predicate(o))
-        exposure = reserved(lambda o: True)
-        correlated = {x['id'] for x in ASSETS if x['id'] == symbol or self.correlation(symbol, x['id']) > .75}
-        return max(0, min(2000, 650*max(1, eq/INITIAL),
-                          (s['cash']-exposure*(1+FEE))/(1+FEE),
-                          # Include fee in post-fill equity-based limits.
-                          (eq*.7-self.invested()-exposure)/(1+.7*FEE),
-                          (eq*.25-self.value(symbol)-reserved(lambda o: o['instrument'] == symbol))/(1+.25*FEE),
-                          a['budget']-self.agent_value(a['id'])-reserved(lambda o: o['agentId'] == a['id']),
-                          (eq*.4-sum(self.value(x) for x in correlated)-reserved(lambda o: o['instrument'] in correlated))/(1+.4*FEE)))
+        return OrderManager(self).buy_room(a, symbol)
 
     def event(self, order, status, detail):
-        order['status'] = status
-        self.s['orderEvents'].insert(0, dict(orderId=order['orderId'], tick=self.s['tick'],
-                                             day=self.s['day'], status=status, detail=detail, at=self.now.isoformat()))
+        return OrderManager(self).event(order, status, detail)
 
-    def submit(self, aid, symbol, side, amount, reason='Strategisignal'):
-        s = self.s
-        a = next((a for a in self.agents() if a['id'] == aid), None)
-        s['orderSeq'] += 1
-        o = dict(orderId='SIM-'+str(s['orderSeq']), agentId=aid, instrument=symbol, side=side,
-                 amount=amount, reason=reason, day=s['day'], tick=s['tick'], requestedQty=0,
-                 filledQty=0, filledNotional=0, feeTotal=0, status='NEW', entryMode=None)
-        s['orders'].insert(0, o)
-        if (not a or symbol not in a['ids'] or side not in ('BUY', 'SELL') or
-                type(amount) not in (int, float) or not math.isfinite(amount) or amount <= 0 or
-                not self.allowed(symbol) or self.last(symbol) <= 0):
-            self.event(o, 'REJECTED', 'Ogiltig order eller stängd marknad')
-            return o
-        if any(x is not o and x['status'] in ('NEW', 'PARTIAL') and x['agentId'] == aid and x['instrument'] == symbol for x in s['orders']):
-            self.event(o, 'REJECTED', 'Väntande order finns')
-            return o
-        if side == 'BUY':
-            self.global_risk()
-            if s['halt'] or s['agentStatus'][aid] != 'AKTIV':
-                self.event(o, 'REJECTED', 'Riskspärr')
-                return o
-            room = min(amount*self.learning(a, symbol), self.buy_room(a, symbol))
-            if room < 90:
-                self.event(o, 'REJECTED', 'Riskutrymme under 90 SEK')
-                return o
-            o['entryMode'] = self.regime(symbol)
-        else:
-            owned = s['positions'].get(symbol, {}).get('owners', {}).get(aid, 0)
-            room = min(amount, owned*self.last(symbol))
-            if room < 30 and not reason.startswith('Chefens'):
-                self.event(o, 'REJECTED', 'För litet innehav')
-                return o
-        o['requestedQty'] = room/self.last(symbol)
-        o['limitPrice'] = self.last(symbol)
-        self.event(o, 'NEW', 'Paper-order accepterad')
-        self.fill(o, a)
-        return o
+    def submit(self, aid, symbol, side, amount, reason='Strategisignal', intent_id=None):
+        return OrderManager(self).submit(aid, symbol, side, amount, reason, intent_id)
 
-    def fill(self, o, a):
-        s, aid, symbol = self.s, a['id'], o['instrument']
-        if not self.allowed(symbol):
-            return
-        if o['side'] == 'BUY' and (s['halt'] or s['agentStatus'][aid] != 'AKTIV'):
-            self.event(o, 'CANCELLED', 'Riskspärr')
-            return
-        number = int(o['orderId'][4:])
-        if o['filledQty'] == 0 and number % 19 == 0:
-            self.event(o, 'REJECTED', 'Simulerad mäklaravvisning')
-            return
-        price = self.last(symbol)
-        qty = o['requestedQty'] - o['filledQty']
-        if o['filledQty'] == 0 and number % 7 == 0:
-            qty *= .6
-        if o['side'] == 'BUY':
-            # Exclude this order's reservation, then recheck every limit at execution price.
-            old_status = o['status']
-            o['status'] = 'CHECKING'
-            already_filled = o.get('filledNotional', sum(
-                fill['qty']*fill['price'] for fill in s['orderHistory'] if fill['orderId'] == o['orderId']))
-            room = min(self.buy_room(a, symbol), 2000-already_filled,
-                       650*max(1, self.equity()/INITIAL)-already_filled)
-            o['status'] = old_status
-            if qty*price > room + 1e-7:
-                self.event(o, 'CANCELLED', 'Riskutrymme ändrades före avslut')
-                return
-        p = s['positions'].setdefault(symbol, dict(qty=0, cost=0, owners={}))
-        fee = qty*price*FEE
-        pnl = None
-        if o['side'] == 'BUY':
-            cost = qty*price+fee
-            s['cash'] -= cost
-            p['qty'] += qty
-            p['cost'] += cost
-            p['owners'][aid] = p['owners'].get(aid, 0)+qty
-            s['ownerCost'][aid][symbol] = s['ownerCost'][aid].get(symbol, 0)+cost
-            s['entryModes'][aid+'|'+symbol] = o['entryMode']
-        else:
-            owned = p['owners'].get(aid, 0)
-            if qty > owned+1e-9 or owned <= 0:
-                self.event(o, 'CANCELLED', 'Otillräckligt innehav')
-                return
-            cost = s['ownerCost'][aid][symbol]*qty/owned
-            proceeds = qty*price-fee
-            p['qty'] -= qty
-            p['cost'] -= cost  # Same cost basis as the selling owner.
-            p['owners'][aid] -= qty
-            s['ownerCost'][aid][symbol] -= cost
-            s['cash'] += proceeds
-            pnl = proceeds-cost
-            s['realizedTotal'] += pnl
-            s['agentRealized'][aid] += pnl
-            self.outcome(a, symbol, pnl, o['reason'])
-            if p['qty'] < 1e-9:
-                del s['positions'][symbol]
-        o['filledNotional'] = o.get('filledNotional', sum(
-            fill['qty']*fill['price'] for fill in s['orderHistory'] if fill['orderId'] == o['orderId']))+qty*price
-        o['filledQty'] += qty
-        o['feeTotal'] += fee
-        self.event(o, 'FILLED' if o['requestedQty']-o['filledQty'] <= 1e-9 else 'PARTIAL', 'Paper-avslut')
-        s['orderHistory'].insert(0, dict(orderId=o['orderId'], tick=s['tick'], day=s['day'], agent=aid,
-                                       id=symbol, side='KÖP' if o['side'] == 'BUY' else 'SÄLJ', amount=qty*price,
-                                       qty=qty, price=price, fee=fee, pnl=pnl, reason=o['reason']))
-        self.log(a['name'], o['side']+' '+symbol+' '+o['status'])
+    def fill(self, order, agent):
+        return OrderManager(self).fill(order, agent)
 
     def outcome(self, a, symbol, pnl, reason):
         s, aid = self.s, a['id']
@@ -336,13 +227,13 @@ class Engine:
     def shadow_signal(self, q, key, side, symbol):
         book = q['shadow']
         if side == 'BUY' and key not in book:
-            book[key] = dict(entry=self.last(symbol), step=self.s['tick'], symbol=symbol)
+            book[key] = dict(entry=PaperBroker(self).quote(symbol, 'BUY'), step=self.s['tick'], symbol=symbol)
         elif side == 'SELL' and key in book:
             self.close_shadow(q, key)
 
     def close_shadow(self, q, key):
         p = q['shadow'].pop(key)
-        pnl = 200*(self.last(p['symbol'])/p['entry']-1)-400*FEE
+        pnl = 200*(PaperBroker(self).quote(p['symbol'], 'SELL')/p['entry']-1)-400*FEE
         q['trades'] += 1
         q['wins'] += pnl > 0
         q['pnl'] += pnl
@@ -364,40 +255,35 @@ class Engine:
         good = (q['trades'] >= (5 if global_pause else 3) and q['pnl'] > 0 and
                 q['wins']/max(1, q['trades']) >= .5 and q['maxDD'] <= (100 if global_pause else 40))
         if global_pause:
-            good = good and (s['peak']-self.equity())/s['peak'] < .10
+            good = good and s['peak'] > 0 and (s['peak']-self.equity())/s['peak'] < .10
         if not good:
             q['next' if global_pause else 'until'] = s['tick']+20
         return good
 
     def signal(self, a, symbol):
-        p = self.s['prices'][symbol]
-        if len(p) < 7:
-            return None
-        curr, prev, strategy = p[-1], p[-2], a['strategy']
-        avg = lambda n: sum(p[-n:])/len(p[-n:])
-        if strategy == 'Trend':
-            return 'BUY' if curr > avg(6)*1.008 and curr > prev else 'SELL' if curr < avg(6)*.992 else None
-        if strategy == 'Momentum':
-            return 'BUY' if curr > avg(5)*1.018 else 'SELL' if curr < avg(5)*.985 else None
-        if strategy == 'Mean reversion':
-            return 'BUY' if curr < avg(6)*.977 else 'SELL' if curr > avg(6)*1.024 else None
-        if strategy == 'ETF':
-            if (symbol == 'ETF-BOND' and self.s['tick'] % 8 == 0 or
-                    symbol == 'ETF-WORLD' and curr > avg(6) and self.s['tick'] % 5 == 0):
-                return 'BUY'
-            return 'SELL' if curr < avg(6)*.975 else None
+        return signal(self.s, a, symbol)
 
-    def step(self, prices, now=None):
+    def step(self, prices, now=None, metadata=None):
         s = self.s
         self.now = now or datetime.now(timezone.utc)
         if set(prices) != {'BTC-SIM', 'ETH-SIM'} or any(not math.isfinite(v) or v <= 0 for v in prices.values()):
             raise ValueError('A complete valid Kraken SEK snapshot is required')
+        if metadata and metadata.get('snapshotId') and metadata['snapshotId'] == s.get('lastSnapshotId'):
+            return
+        if metadata and metadata.get('fetchedAt'):
+            age = (self.now-datetime.fromisoformat(metadata['fetchedAt'])).total_seconds()
+            if not 0 <= age <= 30:
+                raise ValueError('Market snapshot is stale or from the future')
         date, _ = clock(self.now)
+        if s['reportDate'] and date < s['reportDate']:
+            raise ValueError('Clock moved backwards; no trading step executed')
         if s['reportDate'] and s['reportDate'] != date:
             self.close_day()
             self.open_day()
         s['reportDate'] = date
         self.open_day()
+        if metadata and metadata.get('snapshotId'):
+            s['lastSnapshotId'] = metadata['snapshotId']
         s['tick'] += 1
         for a in ASSETS:
             symbol = a['id']
@@ -414,6 +300,8 @@ class Engine:
             s['prices'][symbol].append(price)
             del s['prices'][symbol][:-256]
         s['marketData'] = dict(source='Kraken EUR / ECB SEK', status='ok', at=self.now.isoformat(), error=None)
+        if metadata:
+            s['marketData'].update(metadata)
         self.global_risk()
         agents = self.agents()
         for o in list(s['orders']):
@@ -446,7 +334,7 @@ class Engine:
                 s['agentHalt'][aid] = False
                 s['agentLosses'][aid] = 0
                 # Preserve lifetime accounting; reset only the risk evaluation baseline.
-                s['riskBaseline'][aid] = s['agentRealized'][aid]
+                Ledger(self).reset_risk_baseline(aid)
                 del s['quarantine'][aid]
                 s['shadow'].pop(aid, None)
             v = a['budget']+s['agentRealized'][aid]+self.agent_value(aid)-sum(s['ownerCost'][aid].values())
@@ -458,52 +346,61 @@ class Engine:
         self.global_risk()
         s['hist'].append(self.equity())
         del s['hist'][:-2000]
-        if not s['marketAuto'] and s['tick']-s['dayStartTick'] >= 100:
-            s['running'] = False
-            self.close_day()
         self.audit()
 
     def sweep(self, trigger):
-        s = self.s
-        eligible = max(0, s['realizedTotal']-s['realizedHighWater'])
-        swept = min(eligible*.2, max(0, s['cash']))
-        s['realizedHighWater'] += swept/.2
-        s['cash'] -= swept
-        s['vault'] += swept
-        s['peak'] = max(self.equity(), s['peak']-swept)
-        s['daysSinceSweep'] = 0
-        s['sweepHistory'].insert(0, dict(day=s['day'], tick=s['tick'], trigger=trigger, eligible=eligible, swept=swept, date=self.now.date().isoformat()))
-        if swept:
-            s['vaultMovements'].insert(0, dict(day=s['day'], tick=s['tick'], type=trigger, amount=swept))
-        return eligible, swept
+        return Ledger(self).sweep(trigger)
 
     def close_day(self):
         s = self.s
-        if s['dayClosed']:
+        report_date = s['reportDate'] or clock(self.now)[0]
+        if s['dayClosed'] or report_date in s.setdefault('closedDates', []):
             return
-        s['daysSinceSweep'] += 1
-        eligible, swept = self.sweep('VECKOAVSLUT') if s['daysSinceSweep'] >= 5 else (max(0, s['realizedTotal']-s['realizedHighWater']), 0)
-        s['dayReports'].insert(0, dict(day=s['day'], date=s['reportDate'] or clock(self.now)[0], tick=s['tick'],
+        s['reportDate'] = report_date
+        s['closedDates'].append(report_date)
+        day = date.fromisoformat(report_date)
+        anchor = date.fromisoformat(s.setdefault('weeklyLastDate', (day-timedelta(days=1)).isoformat()))
+        eligible, swept = max(0, s['realizedTotal']-s['realizedHighWater']), 0
+        if (day-anchor).days >= 7:
+            eligible, swept = self.sweep('VECKOAVSLUT')
+            s['weeklyLastDate'] = report_date
+            anchor = day
+        s['nextSweepDate'] = (anchor+timedelta(days=7)).isoformat()
+        s['daysSinceSweep'] = (day-anchor).days
+        s['dayReports'].insert(0, dict(day=s['day'], date=report_date, tick=s['tick'],
                                      dayNet=s['realizedTotal']-s['dayOpenRealized'], realized=s['realizedTotal'],
                                      eligible=eligible, swept=swept, trading=self.equity(), cash=s['cash'],
                                      invested=self.invested(), vault=s['vault'], total=self.equity()+s['vault'],
-                                     openPositions=len(s['positions']), daysToSweep=5-s['daysSinceSweep']))
+                                     openPositions=len(s['positions']), daysToSweep=max(0, 7-s['daysSinceSweep']),
+                                     stockSession=bool(session(day))))
         s['dayClosed'] = True
         s['lastCloseTick'] = s['tick']
-        self.expand()
+        if session(day):
+            s.setdefault('expansionDates', []).append(report_date)
+            self.expand()
+        self.log('CAPITAL', 'Dagsavslut '+report_date)
 
     def open_day(self):
         s = self.s
         if s['dayClosed']:
+            if clock(self.now)[0] <= s['reportDate']:
+                raise ValueError('Dagen är avslutad. Nästa handelsdag kan öppnas först nästa Stockholm-datum.')
             s['day'] += 1
             s['dayStartTick'] = s['tick']
             s['dayOpenRealized'] = s['realizedTotal']
             s['dayOpenEquity'] = self.equity()
             s['dayClosed'] = False
+            s['reportDate'] = clock(self.now)[0]
 
     def expand(self):
         s = self.s
-        if s['halt'] or len(s['dayReports']) % 5 or sum(r['dayNet'] for r in s['dayReports'][:5]) <= 0:
+        days = s.setdefault('expansionDates', [])
+        previous = s.setdefault('lastExpansionReview', 0)
+        if len(days)-previous < 5:
+            return
+        s['lastExpansionReview'] = len(days)
+        recent = set(days[-5:])
+        if s['halt'] or s['globalPause'] or sum(r['dayNet'] for r in s['dayReports'] if r['date'] in recent) <= 0:
             return
         if sum(v == 'AKTIV' for v in s['agentStatus'].values()) < math.ceil(s['agentCount']*.6):
             return
@@ -515,25 +412,7 @@ class Engine:
             self.announce(a['name']+' skapad i skuggläge')
 
     def capital(self, amount, kind):
-        s = self.s
-        if type(amount) not in (int, float) or not math.isfinite(amount) or amount <= 0 or amount > 1e8:
-            raise ValueError('Invalid positive amount')
-        if kind == 'release':
-            if amount > s['vault']:
-                raise ValueError('Insufficient protected balance')
-            s['vault'] -= amount
-            s['cash'] += amount
-            s['peak'] += amount
-            s['vaultMovements'].insert(0, dict(day=s['day'], tick=s['tick'], type='MANUELLT GODKÄND ÅTERFÖRING', amount=-amount))
-        else:
-            if kind == 'withdraw' and amount > s['cash']:
-                raise ValueError('Insufficient free cash')
-            delta = amount if kind == 'deposit' else -amount
-            s['cash'] += delta
-            s['ownerNetDeposits'] += delta
-            s['peak'] = max(self.equity(), s['peak']+delta)
-            s['dayOpenEquity'] += delta
-            s['ownerMovements'].insert(0, dict(day=s['day'], tick=s['tick'], type='ÄGARINSÄTTNING' if delta > 0 else 'ÄGARUTTAG', amount=delta))
+        return Ledger(self).capital(amount, kind)
 
     def command(self, name, data):
         s = self.s
@@ -546,14 +425,17 @@ class Engine:
             s['running'] = True
         elif name == 'stop':
             s['running'] = False
+            s['stopGeneration'] = s.get('stopGeneration', 0)+1
             for order in s['orders']:
                 if order['status'] in ('NEW', 'PARTIAL'):
                     self.event(order, 'CANCELLED', 'Manuellt nödstopp')
         elif name == 'pause':
             self.pause('Manuell riskpaus')
         elif name == 'approve':
+            if not self.operator:
+                raise ValueError('Signed owner approval required')
             self.global_risk()
-            if not s['approvalPending'] or not s['globalPause'] or (s['peak']-self.equity())/s['peak'] >= .10:
+            if not s['approvalPending'] or not s['globalPause'] or s['peak'] <= 0 or (s['peak']-self.equity())/s['peak'] >= .10:
                 raise ValueError('Recovery test has not passed')
             s['halt'], s['approvalPending'], s['globalPause'] = False, False, None
             self.announce('Du godkände återstart')
@@ -582,15 +464,4 @@ class Engine:
         self.audit()
 
     def audit(self):
-        s = self.s
-        for symbol, p in s['positions'].items():
-            if abs(sum(p['owners'].values())-p['qty']) > 1e-7 or p['qty'] < -1e-9:
-                raise ValueError('Position ownership mismatch')
-            if abs(sum(cost.get(symbol, 0) for cost in s['ownerCost'].values())-p['cost']) > 1e-6:
-                raise ValueError('Position cost basis mismatch')
-        if min(s['cash'], s['vault']) < -1e-6:
-            raise ValueError('Negative cash or protected balance')
-        expected = s['ownerNetDeposits']+s['realizedTotal']-sum(p['cost'] for p in s['positions'].values())
-        if abs(s['cash']+s['vault']-expected) > 1e-5:
-            raise ValueError('Capital ledger mismatch')
-        return True
+        return Ledger(self).audit()

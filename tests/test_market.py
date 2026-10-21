@@ -15,6 +15,8 @@ class MarketTests(unittest.TestCase):
             self.assertTrue(url.startswith('https://'))
             if url == Kraken.fx_url:
                 return io.BytesIO(xml)
+            if '/Depth?' in url:
+                return io.BytesIO(json.dumps(dict(error=[], result={'PAIR':dict(bids=[['100','2','1']], asks=[['101','2','1']])})).encode())
             return io.BytesIO(json.dumps(payload if payload is not None else dict(error=[], result={
                 'XXBTZEUR':dict(c=['60000','1']), 'XETHZEUR':dict(c=['2500','1'])})).encode())
         return open_url

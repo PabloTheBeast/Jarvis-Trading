@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import threading
+import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,6 +23,14 @@ class Market:
 
 with tempfile.TemporaryDirectory() as tmp:
     store = Store(Path(tmp)/'paper.sqlite3')
+    def seed_profit(e):
+        e.s['prices']['BTC-SIM']=[600000]
+        e.s['paperBroker']=dict(spreadBps=0,slippageBps=0)
+        e.submit('gamma','BTC-SIM','BUY',300)
+        e.s['prices']['BTC-SIM'].append(900000)
+        e.submit('gamma','BTC-SIM','SELL',1000)
+        e.sweep('test-profit')
+    store.change('test-profit',seed_profit)
     runtime = Runtime(store, Market())
     server = make_server(runtime, 0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -42,7 +51,28 @@ with tempfile.TemporaryDirectory() as tmp:
             page.once('dialog', lambda dialog: dialog.accept())
             page.click('#deposit-btn')
             page.wait_for_function("()=>document.querySelector('#owner-capital').textContent.includes('10 500')")
-            page.click('[data-tab=\"risk\"]')
+            page.click('[data-tab="portfolio"]')
+            before=store.state['vault']
+            result=subprocess.run([sys.executable,'-m','backend.ops','--db',str(Path(tmp)/'paper.sqlite3'),
+                                   'approve','release','--amount','1'],capture_output=True,text=True,check=True)
+            answers=iter(['1',None,result.stdout.strip()])
+            def approve_dialog(dialog):
+                value=next(answers)
+                if value is None:
+                    dialog.accept()
+                else:
+                    dialog.accept(value)
+            page.on('dialog',approve_dialog)
+            page.click('#release')
+            page.wait_for_function("()=>document.querySelector('#vault').textContent.includes('28')")
+            page.remove_listener('dialog',approve_dialog)
+            assert abs(store.state['vault']-(before-1))<1e-8
+            page.click('[data-tab="history"]')
+            for button,filename in [('#export-capital','capital.csv'),('#export-journal','journal.jsonl')]:
+                with page.expect_download() as event:
+                    page.click(button)
+                assert event.value.suggested_filename==filename
+            page.click('[data-tab="risk"]')
             page.click('#testpause')
             page.wait_for_function("()=>document.querySelector('#recovery').textContent.includes('GLOBAL PAUS')")
             assert page.is_disabled('#approve')

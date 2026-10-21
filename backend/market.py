@@ -5,6 +5,8 @@ No private Kraken API, API key or live order submission exists.
 import json
 import math
 import time
+import uuid
+from datetime import datetime, timezone
 from datetime import date
 from urllib.request import urlopen
 from xml.etree import ElementTree
@@ -59,7 +61,26 @@ class Kraken:
                 if not math.isfinite(price) or price <= 0:
                     raise ValueError('Invalid ticker price')
                 prices[symbol] = price
-            self.metadata = dict(fxSource='ECB daily reference', eurSek=rate, fxDate=day,
+            books = {}
+            for symbol, pair in [('BTC-SIM', 'XBTEUR'), ('ETH-SIM', 'ETHEUR')]:
+                url = 'https://api.kraken.com/0/public/Depth?pair='+pair+'&count=10'
+                with self.opener(url, timeout=10) as response:
+                    depth = json.load(response)
+                if depth.get('error') or len(depth.get('result', {})) != 1:
+                    raise ValueError('Kraken depth unavailable')
+                raw = next(iter(depth['result'].values()))
+                book = {}
+                for side in ('bids', 'asks'):
+                    levels = [[float(row[0])*rate, float(row[1])] for row in raw[side]]
+                    if not levels or any(not math.isfinite(p) or not math.isfinite(q) or p <= 0 or q <= 0 for p, q in levels):
+                        raise ValueError('Invalid Kraken depth')
+                    if levels != sorted(levels, key=lambda row: row[0], reverse=side == 'bids'):
+                        raise ValueError('Unsorted Kraken depth')
+                    book[side] = levels
+                if book['bids'][0][0] >= book['asks'][0][0] or book['asks'][0][0]/book['bids'][0][0]-1 > .05:
+                    raise ValueError('Crossed or excessive-spread Kraken depth')
+                books[symbol] = book
+            self.metadata = dict(orderBooks=books, snapshotId=uuid.uuid4().hex, fetchedAt=datetime.now(timezone.utc).isoformat(),fxSource='ECB daily reference', eurSek=rate, fxDate=day,
                                  quoteCurrency='EUR', accountCurrency='SEK')
             return prices
         except Exception as exc:

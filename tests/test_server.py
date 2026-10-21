@@ -91,6 +91,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.command('deposit', dict(amount=100), extra={'X-Jarvis-Client':''})[0], 403)
         self.assertEqual(self.store.state['cash'], 10000)
 
+    def test_exports_and_protected_approval_endpoints(self):
+        self.command('deposit', dict(amount=100))
+        for name in ['trades.csv', 'capital.csv', 'journal.jsonl']:
+            with urlopen(self.url+'/api/export/'+name,timeout=5) as response:
+                body=response.read().decode('utf-8-sig')
+                self.assertTrue(body)
+                if name=='capital.csv':
+                    self.assertIn('DEPOSIT',body)
+                if name=='journal.jsonl':
+                    rows=[json.loads(row) for row in body.splitlines()]
+                    self.assertGreaterEqual(len(rows),2)
+        self.assertEqual(self.command('release',dict(amount=1,approved=True),key='unsigned')[0],400)
+        self.assertEqual(self.command('approve',key='unsigned-approve')[0],400)
+        self.assertNotIn('book',self.request()[1]['state'])
+
     def test_no_live_or_reset_command(self):
         for name in ['live', 'order', 'reset']:
             self.assertEqual(self.command(name)[0], 400)
