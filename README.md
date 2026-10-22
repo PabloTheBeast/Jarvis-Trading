@@ -1,4 +1,6 @@
-# JARVIS Trading v0.8 — agentkontroll och verkliga handelsbudgetar
+# Estman Investments — agentkontroll och verkliga handelsbudgetar
+
+Projektet heter nu **Estman Investments**. Se [START-HAR.md](START-HAR.md) för att fortsätta i Codex. De tekniska modul- och miljövariabelnamnen behålls för kompatibilitet.
 
 Python kör kursbevakning och agentbedömningar utan en öppen webbläsare.
 **Vanlig start visar verkligt Kraken-konto och bekräftade affärer; simulerad handel

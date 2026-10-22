@@ -3,14 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JARVIS Trading</title>
+  <title>Estman Investments</title>
+  <link rel="preload" href="/assets/fonts/ChakraPetch-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="preload" href="/assets/fonts/ChakraPetch-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="/dashboard.css">
   <script src="/dashboard.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main-content">Till innehållet</a>
 <header class="app-header">
-  <div class="brand"><span class="brand-mark" aria-hidden="true">J</span><div><h1>JARVIS <span>Trading</span></h1><p>Marknad, beslut och risk på samma plats</p></div></div>
+  <div class="brand"><span class="brand-mark" aria-hidden="true">EI</span><div><h1>Estman <span>Investments</span></h1><p>Marknad, beslut och risk på samma plats</p></div></div>
   <div class="header-status"><span class="badge" id="paper-mode">Kraken · bevakning</span><span id="clock" class="muted">Ansluter…</span></div>
 </header>
 <div class="app-shell">
@@ -88,7 +90,7 @@
     </section>
 
     <section class="tabview" id="tab-risk" role="tabpanel" aria-labelledby="nav-risk" hidden>
-      <div class="page-heading"><div><p class="eyebrow">JARVIS CHEF</p><h2>Risk &amp; återhämtning</h2><p>CHEF granskar paper-portföljens exponering, förluster och återstart.</p></div><div class="toolbar"><button id="testpause" type="button">Testa paper-riskpaus</button><button id="approve" type="button" class="primary" disabled>Godkänn paper-återstart</button></div></div>
+      <div class="page-heading"><div><p class="eyebrow">Estman Investments CHEF</p><h2>Risk &amp; återhämtning</h2><p>CHEF granskar paper-portföljens exponering, förluster och återstart.</p></div><div class="toolbar"><button id="testpause" type="button">Testa paper-riskpaus</button><button id="approve" type="button" class="primary" disabled>Godkänn paper-återstart</button></div></div>
       <div id="recovery" class="notice"></div>
       <div class="two-columns"><article class="panel"><h3>Exponeringsgränser</h3><div id="risk"></div></article><article class="panel"><h3>Karantän &amp; skugghandel</h3><div id="oversight"></div></article></div>
       <article class="panel"><details><summary>Delat erfarenhetsminne</summary><p class="caption">Avslutade paper-affärer justerar orderstorlek. Detta är adaptiva regler, inte tränad AI.</p><div id="memory" class="scroll"></div></details></article>
@@ -97,7 +99,7 @@
     <section class="tabview" id="tab-history" role="tabpanel" aria-labelledby="nav-history" hidden>
       <div class="real-ui"><div class="page-heading"><div><p class="eyebrow">BEKRÄFTADE KRAKEN-AVSLUT</p><h2>Affärshistorik</h2><p>Datum och tid i Europe/Stockholm. Ordertid är inte samma sak som ett genomfört avslut.</p></div><button id="refresh-real-history" type="button">Uppdatera från Kraken</button></div>
       <div id="real-history-status" class="notice"></div>
-      <article class="panel"><h3>Köpt → sålt</h3><p class="caption">Matchar JARVIS-köp mot senare försäljningar enligt FIFO, separat per par och agent. Nettot inkluderar båda sidors avgifter. Det är en historikvy, inte skattebokföring.</p><div class="scroll"><table><thead><tr><th>Ansvarig / par</th><th>Köpt · datum och tid</th><th>Sålt · datum och tid</th><th>Antal</th><th>Netto, EUR</th></tr></thead><tbody id="real-roundtrips"></tbody></table></div></article>
+      <article class="panel"><h3>Köpt → sålt</h3><p class="caption">Matchar Estman Investments-köp mot senare försäljningar enligt FIFO, separat per par och agent. Nettot inkluderar båda sidors avgifter. Det är en historikvy, inte skattebokföring.</p><div class="scroll"><table><thead><tr><th>Ansvarig / par</th><th>Köpt · datum och tid</th><th>Sålt · datum och tid</th><th>Antal</th><th>Netto, EUR</th></tr></thead><tbody id="real-roundtrips"></tbody></table></div></article>
       <article class="panel"><h3>Köpt, ännu inte matchat med försäljning</h3><div class="scroll"><table><thead><tr><th>Ansvarig / par</th><th>Köpt · datum och tid</th><th>Kvarvarande antal</th><th>Inköpskostnad inkl. avgift, EUR</th></tr></thead><tbody id="real-open-lots"></tbody></table></div></article>
       <article class="panel"><h3>Alla bekräftade köp och försäljningar</h3><div class="scroll"><table><thead><tr><th>Datum och tid</th><th>Ansvarig</th><th>Par</th><th>Köp / sälj</th><th>Antal</th><th>Pris, EUR</th><th>Avgift, EUR</th><th>Avsluts-ID</th></tr></thead><tbody id="real-executions"></tbody></table></div></article>
       <article class="panel"><h3>Försäljningar där inköpet saknas</h3><div id="real-unmatched"></div></article></div>
@@ -137,7 +139,7 @@
       <article class="panel"><h3>Anslutningar och begränsningar</h3><div id="supervision-limitations"></div></article>
     </section>
   </main>
-  <footer>JARVIS v0.8 · Regelbaserad analys · Konto och bekräftade affärer i EUR · Agenthandel endast efter sessionsgodkännande · Svenska aktier ej anslutna</footer>
+  <footer>Estman Investments v0.8 · Regelbaserad analys · Konto och bekräftade affärer i EUR · Agenthandel endast efter sessionsgodkännande · Svenska aktier ej anslutna</footer>
 </div>
 <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 </body>
