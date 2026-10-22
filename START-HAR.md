@@ -20,7 +20,7 @@ Stoppa eventuell gammal server med Ctrl+C och kör i din projektmapp:
 
 ```bash
 git fetch origin
-git switch feature/estman-investments-design
+git switch feature/estman-live-overview
 JARVIS_PAPER_MODE=0 JARVIS_MONITOR_ONLY=1 python3 -m backend.server
 ```
 

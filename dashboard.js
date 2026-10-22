@@ -401,9 +401,6 @@ async function sessionAction(action){
 function renderExchange(){
   const e=app.exchange;if(!e)return;
   const h=e.tradeHistory||{executions:[],closed:[],open:[],unmatchedSales:[]},balances=e.account?.balances;
-  $('real-overview').replaceChildren(metric('EUR-saldo',balances?euro(balances.EUR.balance):'—','Verkligt saldo från Kraken'),
-    metric('BTC-saldo',balances?quantity(balances.XBT.balance):'—'),metric('ETH-saldo',balances?quantity(balances.ETH.balance):'—'),
-    metric('Bekräftade avslut',h.executions.length,'Bara verifierade Estman-order'));
   text('real-history-status',e.error||e.tickets.some(t=>t.historyError)?'Historiken kunde inte uppdateras fullständigt. Tidigare verifierade affärer visas; kontrollera konto och orderavstämning.':
     'Visar bara bekräftade avslut för order skickade via Estman Investments. Senaste kontokontroll: '+(e.checkedAt?tradeTime(e.checkedAt):'ännu inte hämtat')+'.');
   rows('real-roundtrips',h.closed.map(t=>[ (t.agentId||'Manuell')+' · '+t.pair,tradeTime(t.boughtAt),tradeTime(t.soldAt),quantity(t.quantity),euro(t.netEUR)]),'Inga matchade köp och försäljningar ännu.',5);
@@ -562,3 +559,102 @@ $('research-form').onsubmit=async event=>{
   try{await post('/api/supervision/research',Object.fromEntries(new FormData(event.target)));event.target.reset();await refreshSupervision();}catch(e){showError(e.message);}
 };
 refreshSupervision();
+
+// Cached live overview polls independently of commands and source network calls.
+const liveOverview={data:null,received:0,polling:false,error:null,sequence:0};
+const overviewSessionLabels={PLANNED:'Plan · ej startad',RUNNING:'Handel pågår',WATCHING:'Efterbevakning · endast sälj',STOPPING:'Avslutar · order kan pågå',PAUSED:'Riskpaus',RECOVERY:'Återställning · granskning krävs',STOPPED:'Avslutad',STOPPED_HOLDINGS:'Avslutad · innehav kvar',CANCELLED:'Plan avbruten'};
+function overviewAge(stamp){
+  if(!stamp||!liveOverview.data)return null;
+  const delta=Date.parse(liveOverview.data.serverTime)+(performance.now()-liveOverview.received)-Date.parse(stamp);
+  return Number.isFinite(delta)&&delta>=0?delta/1000:null;
+}
+function overviewFreshness(){
+  const d=liveOverview.data;
+  const age=stamp=>{const value=overviewAge(stamp);return value===null?'ingen verifierad tid':Math.floor(value)+' s sedan';};
+  const elapsed=performance.now()-liveOverview.received;
+  const connection=Boolean(d&&!liveOverview.error&&elapsed<8000);
+  const accountAge=overviewAge(d?.freshness.account.checkedAt),marketAge=overviewAge(d?.freshness.market.checkedAt);
+  const account=Boolean(connection&&d.freshness.account.fresh&&accountAge!==null&&accountAge<=90);
+  const market=Boolean(connection&&d.freshness.market.fresh&&marketAge!==null&&marketAge<=30);
+  $('overview-status').replaceChildren(badge(connection?'Server ansluten':'Serverkontakt saknas',connection?'good':'bad'),
+    badge(account?'Kraken-konto · aktuellt':'Kraken-konto · ej aktuellt',account?'good':'warn'),
+    badge(market?'Marknad · aktuell':'Marknad · ej aktuell',market?'good':'warn'),
+    badge(d?.mode==='MONITOR_ONLY'?'Bevakningsläge · inga order':d?.mode==='LIVE_PERMITTED'?'Live tillåtet · godkännande krävs':'Livehandel avstängd',d?.mode==='LIVE_PERMITTED'?'warn':''));
+  text('overview-refresh-status',liveOverview.error?'Översikten kunde inte uppdateras. Visade värden är senast hämtade. '+liveOverview.error:
+    d?'Kontroll av konto: '+(d.freshness.account.checkedAt?tradeTime(d.freshness.account.checkedAt):'ej hämtat')+' · '+age(d.freshness.account.checkedAt)+'. Marknadsdata: '+age(d.freshness.market.checkedAt)+'. Sidan läser servern varannan sekund; konto/order normalt cirka var 60:e sekund.':'Hämtar översikten…');
+  $('real-overview').classList.toggle('data-stale',!account||!market);
+  $('overview-holdings').classList.toggle('data-stale',!account||!market);
+  $('overview-prices').classList.toggle('data-stale',!market);
+  $('overview-orders').classList.toggle('data-stale',!account);
+  const valuation=$('real-overview').querySelector('small');
+  if(valuation)valuation.textContent=account&&market?'Verifierat saldo · värderat till köpbud':'Senast känt eller ofullständigt värde';
+  return {account,market,connection};
+}
+function renderLiveOverview(){
+  const d=liveOverview.data;if(!d){overviewFreshness();return;}
+  const f=overviewFreshness(),t=d.totals,s=d.trading.session;
+  text('overview-stop',s?.status==='WATCHING'?'Avsluta bevakning':s?.status==='PLANNED'?'Avbryt plan':'Avsluta trading');
+  $('overview-stop').disabled=!s||!['PLANNED','RUNNING','WATCHING','STOPPING','PAUSED','RECOVERY'].includes(s.status);
+  $('overview-warnings').replaceChildren(...d.warnings.map(w=>node('p',{class:'notice warn',text:w})));
+  $('real-overview').replaceChildren(metric('Kontovärde · EUR',euro(t.accountValueEUR),f.account&&f.market?'Verifierat saldo · värderat till köpbud':'Senast känt eller ofullständigt värde'),
+    metric('Tillgängligt EUR',euro(t.availableEUR),'EUR-saldo: '+euro(t.cashEUR)+' · tillgängligt efter orderreservationer'),
+    metric('Investerat i krypto',euro(t.investedEUR),'Exponering: '+(finite(t.exposurePercent)?percent(Number(t.exposurePercent)/100):'—')),
+    metric('Realiserat netto i dag',euro(t.todayRealizedNetEUR),'Stockholm · kända Estman-avslut'+(t.resultComplete?'':' · ofullständigt underlag')));
+  $('overview-capital').replaceChildren(metric('Skyddad intern reserv',euro(t.reservedEUR),'Spärr i Estman · inget separat konto'),
+    metric('EUR efter intern reserv',euro(t.spendableEUR),'Inte samma sak som godkänd köpbudget'),
+    metric('Realiserat netto · historik',euro(t.realizedNetEUR),t.resultComplete?'Kända matchade avslut efter avgifter':'Ofullständig inköpshistorik'),
+    metric('Nya köp · aktiv ram kvar',s?euro(s.status==='RUNNING'?d.trading.remainingNewBuysEUR:'0'):'—',s?overviewSessionLabels[s.status]||s.status:'Ingen sessionsplan'));
+  $('overview-prices').replaceChildren(...d.prices.map(p=>{
+    const stream=p.stream;
+    return node('div',{class:'overview-price'},[node('strong',{text:p.pair}),badge(f.market&&p.fresh?'REST · aktuell':'REST · ej aktuell',f.market&&p.fresh?'good':'warn'),
+      node('p',{class:'overview-quote',text:euro(p.bidEUR)+' / '+euro(p.askEUR)}),node('p',{class:'caption',text:'Köpbud / säljbud · spread '+(finite(p.spreadPercent)?Number(p.spreadPercent).toLocaleString('sv-SE',{maximumFractionDigits:4})+' %':'—')}),
+      node('p',{text:'CHEF: '+(f.market&&p.signalFresh?p.signal?.side||'WAIT':'Inväntar färsk signal')+' · '+(p.trend||'analys inväntas')}),
+      ...(stream?[node('p',{class:'caption',text:'WebSocket vid hämtning: '+euro(stream.bid)+' / '+euro(stream.ask)+' · '+tradeTime(stream.at)})]:[])]);
+  }));
+  const facts=[['Session',s?overviewSessionLabels[s.status]||s.status:'Ingen startad'],['Orsak',s?.reason||'Ingen insättning startar handel.'],
+    ['Sessionskapitaltak',s?euro(s.capitalEUR):'—'],['Förlust-/drawdowngräns',s?euro(s.maxLossEUR):'—'],['Planerad sluttid',s?tradeTime(s.expiresAt):'—'],
+    ['Kvarvarande innehav efter avslut',s?.status==='WATCHING'?'Bevakas · servern måste köra':s?.status==='STOPPED_HOLDINGS'?'Ingen automatisk orderhantering':'Enligt godkänd sessionsplan']];
+  $('overview-chef').replaceChildren(...facts.map(([label,value])=>node('div',{},[node('dt',{text:label}),node('dd',{text:value})])));
+  rows('overview-holdings',d.holdings.map(h=>[h.asset,quantity(h.quantity)+' / '+quantity(h.available),euro(h.valueEUR),h.basisKnown?euro(h.unrealizedEUR):'Okänd inköpskostnad',h.agents.join(', ')||'Ej agentkopplat']),
+    d.freshness.account.checkedAt?'Inga verifierbara kontouppgifter just nu.':'Kontot har ännu inte kunnat läsas.',5);
+  text('overview-holdings-status',f.account&&f.market?'Aktuella data · orealiserat före framtida säljavgift':'Senast känt / ofullständigt underlag');
+  text('overview-order-count',d.openOrderCount===null?'Okänt antal':d.openOrderCount+' på Kraken');
+  $('overview-orders').replaceChildren(...d.openOrders.map(o=>node('div',{class:'event'},[node('strong',{text:o.pair+' · '+(o.side==='buy'?'Köp':'Sälj')+' · '+(o.agentId||'Manuell / ej agentkopplad')}),node('p',{text:'Antal '+o.volume+' · avslutat '+o.filled+' · limit '+o.price+' EUR'}),node('span',{class:'mono',text:o.id})])),
+    ...d.pendingTickets.map(o=>node('div',{class:'event'},[badge(o.state,['UNKNOWN','VALIDATION_UNKNOWN','SENDING'].includes(o.state)?'bad':'warn'),node('p',{text:'Lokal biljett · '+(o.agentId||'Manuell')+' · '+o.pair+' · '+o.side}),node('span',{class:'mono',text:o.exchangeOrderId||o.id})])),
+    ...(!d.openOrders.length&&!d.pendingTickets.length?[node('p',{text:d.openOrderCount===0?'Inga öppna Kraken-order eller lokala order under avstämning.':'Kontots öppna order är inte verifierade.'})]:[]));
+  $('overview-fills').replaceChildren(...(d.recentFills.length?d.recentFills.map(fill=>node('div',{class:'event'},[
+    node('small',{text:tradeTime(fill.executedAt)}),node('strong',{text:(fill.agentId||'Manuell')+' · '+fill.pair+' · '+(fill.side==='buy'?'Köp':'Sälj')}),
+    node('p',{text:quantity(fill.quantity)+' @ '+euro(fill.priceEUR)+' · avgift '+euro(fill.feeEUR)})])):[node('p',{text:'Inga verifierade Estman-avslut ännu. Signaler och orderförslag är inga affärer.'})]));
+  const labels={ACTIVE:'Tillåten pilot',LIMITED:'Begränsad provbudget',QUARANTINE:'Karantän',SHADOW:'Skugghandel',REVIEW_READY:'Inväntar ägargranskning'};
+  $('overview-live-agents').replaceChildren(...d.agents.map(a=>node('article',{class:'status-card'},[node('h4',{text:a.id.toUpperCase()}),badge(labels[a.status]||a.status,['ACTIVE','LIMITED'].includes(a.status)?'good':'warn'),
+    node('p',{text:(a.budgetActive?'Godkänd agentram: ':'Planerad agentram: ')+euro(a.budgetEUR)}),node('p',{text:'Realiserat netto: '+euro(a.metrics.netEUR)+' · avslut: '+a.metrics.closedTrades}),
+    ...a.reports.map(r=>node('p',{text:(r.instrument==='BTC-SIM'?'BTC/EUR':'ETH/EUR')+' · '+(f.market&&r.fresh?r.side:'Inväntar färsk signal')})),node('p',{text:a.reason})])));
+}
+async function refreshLiveOverview(){
+  if(liveOverview.polling)return;
+  liveOverview.polling=true;
+  const seq=++liveOverview.sequence;
+  try{
+    const result=await getJSON('/api/overview');
+    if(seq!==liveOverview.sequence)return;
+    liveOverview.data=result;liveOverview.received=performance.now();liveOverview.error=null;renderLiveOverview();
+  }catch(e){liveOverview.error=e.message;overviewFreshness();}
+  finally{liveOverview.polling=false;}
+}
+$('overview-refresh').onclick=async()=>{
+  const button=$('overview-refresh');button.disabled=true;text('overview-refresh-status','Kontrollerar Kraken-kontot…');
+  try{await post('/api/exchange/check');await refreshExchange();await refreshLiveOverview();}
+  catch(e){liveOverview.error=e.message;overviewFreshness();}
+  finally{button.disabled=false;}
+};
+refreshLiveOverview();
+setInterval(refreshLiveOverview,2000);
+setInterval(overviewFreshness,1000);
+
+$('overview-stop').onclick=async()=>{
+  const session=liveOverview.data?.trading.session;if(!session)return;
+  $('overview-stop').disabled=true;
+  try{await post('/api/trading-session/stop',{session:session.id});await refreshTrading();await refreshLiveOverview();}
+  catch(e){showError(e.message);}
+};
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){overviewFreshness();refreshLiveOverview();}});

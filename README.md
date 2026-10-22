@@ -9,6 +9,8 @@ en separat förberedd, ägarsignerad och tidsbegränsad session; insättningar e
 serverstart aktiverar aldrig sådan handel. Manuella ägarsignerade Kraken-limitorder
 är avstängda som standard. Se [lokal Kraken-konfiguration](docs/KRAKEN-LIVE.md).
 
+Se även [Liveöversikt: belopp, uppdatering och datastatus](docs/LIVE-OVERVIEW.md).
+
 Se [Agentkontroll: budget, karantän, skugghandel, vinstreserv och begränsningar](docs/AGENT-CONTROL.md).
 
 Dashboarden visar Översikt, Marknad, Beslut, Agenter, Agentkontroll, Historik, System och

@@ -32,7 +32,25 @@
   <div id="command-error" class="notice error" role="alert" hidden></div>
   <main id="main-content" tabindex="-1">
     <section class="tabview" id="tab-overview" role="tabpanel" aria-labelledby="nav-overview">
-      <div class="real-ui"><div class="page-heading"><div><p class="eyebrow">KRAKEN · VERKLIGT KONTO</p><h2>Marknad &amp; konto</h2><p>Agenterna bevakar BTC och ETH. Bara bekräftade Kraken-avslut visas som affärer.</p></div><button type="button" data-view="exchange">Visa Kraken-konto</button></div><div id="real-overview" class="stats"></div><p class="caption">Saldot läses från Kraken. Svenska aktier är ännu inte anslutna. Agenthandel kräver en separat godkänd session.</p></div>
+      <div class="real-ui live-overview">
+        <div class="page-heading"><div><p class="eyebrow">ESTMAN INVESTMENTS · KRAKEN</p><h2>Liveöversikt</h2><p>Kontot, marknaden och agenternas handel på samma plats.</p></div><div class="toolbar"><button type="button" id="overview-stop" class="danger" disabled>Avsluta trading</button><button type="button" id="overview-refresh">Uppdatera kontot</button><button type="button" data-view="exchange">Visa Kraken-konto</button></div></div>
+        <div class="live-status-strip" id="overview-status" aria-label="Anslutningar och datastatus"></div>
+        <p id="overview-refresh-status" class="caption" role="status">Hämtar översikten…</p>
+        <div id="overview-warnings" role="status"></div>
+        <div id="real-overview" class="stats"></div>
+        <div id="overview-capital" class="stats small-stats"></div>
+        <p class="caption">Kontovärdet omfattar EUR, BTC och ETH och värderas till verifierad köpbudskurs före eventuell säljavgift. Resultat avser enbart kända Estman-affärer; insättningar är inte vinst.</p>
+        <div class="two-columns overview-live-columns">
+          <article class="panel"><div class="section-heading"><h3>Kryptomarknaden</h3><button type="button" data-view="market">Marknadsanalys</button></div><div id="overview-prices"></div><p class="caption">REST-kurser cirka var 15:e sekund. Aktiverad WebSocket-ström visas separat. Strategier använder avslutade femminutersstaplar.</p></article>
+          <article class="panel"><div class="section-heading"><h3>CHEF &amp; risk</h3><button type="button" data-view="supervision">Agentkontroll</button></div><dl id="overview-chef" class="facts"></dl></article>
+        </div>
+        <article class="panel"><div class="section-heading"><h3>Verkliga innehav</h3><span id="overview-holdings-status" class="caption"></span></div><div class="scroll"><table><thead><tr><th>Tillgång</th><th>Antal / tillgängligt</th><th>Värde, EUR</th><th>Orealiserat, EUR</th><th>Ansvarig</th></tr></thead><tbody id="overview-holdings"></tbody></table></div></article>
+        <div class="two-columns overview-live-columns">
+          <article class="panel"><div class="section-heading"><h3>Aktiva order &amp; avstämning</h3><span id="overview-order-count" class="badge">—</span></div><div id="overview-orders"></div><p class="caption">Öppna order hämtas från Kraken. Lokala order med okänt utfall visas separat och räknas inte som avslut.</p></article>
+          <article class="panel"><div class="section-heading"><h3>Senaste verkliga avslut</h3><button type="button" data-view="history">All historik</button></div><div id="overview-fills"></div></article>
+        </div>
+        <article class="panel"><div class="section-heading"><h3>Liveagenter</h3><button type="button" data-view="supervision">Visa resultat &amp; skuggprov</button></div><div id="overview-live-agents" class="live-agent-grid"></div><p class="caption">Tre agenter stöder Kraken-handel. Status Aktiv betyder behörighet, inte att en handelssession har startats. Svenska aktier är ännu inte anslutna.</p></article>
+      </div>
       <article class="panel real-ui" id="trading-session-panel"><div class="section-heading"><div><h3>CHEF · Starta och avsluta trading</h3><p class="caption">Gäller endast BTC/EUR och ETH/EUR på Kraken. Pengarna ligger kvar på kontot.</p></div><span id="session-state" class="badge">Bevakning</span></div>
       <div class="form-grid"><label>Högsta sessionskapital, EUR<input id="session-capital" type="text" inputmode="decimal" value="100"></label><label>Längsta session<select id="session-duration"><option value="120">2 timmar</option><option value="480" selected>8 timmar</option><option value="720">12 timmar</option></select></label><label>När jag avslutar<select id="session-policy"><option value="assess">CHEF bedömer: sälj vid säljsignal eller stop-loss, annars behåll</option><option value="hold">Behåll alla innehav, annullera öppna order</option></select></label><label>Efterbevakning av kvarvarande innehav<select id="session-protection"><option value="0">Ingen efterbevakning</option><option value="1440">Bevaka och tillåt skyddande försäljning till 24 timmar efter planerad sluttid</option></select></label></div>
       <div class="toolbar"><button id="session-plan" type="button">Granska budgetfördelning</button><button id="session-start" type="button" class="live-action" disabled>Starta trading</button><button id="session-stop" type="button" class="danger" disabled>Avsluta trading</button></div>
@@ -51,7 +69,7 @@
         <article class="panel"><h3>Risk just nu</h3><dl class="facts"><div><dt>Investerat</dt><dd id="invested">—</dd></div><div><dt>Exponering</dt><dd id="exposure">—</dd></div><div><dt>Historisk drawdown</dt><dd id="drawdown">—</dd></div><div><dt>Paper-motor</dt><dd id="status">Pausad</dd></div><div><dt>Marknadsdata</dt><dd id="overview-data">Väntar</dd></div></dl><button type="button" data-view="risk">Visa riskkontroller</button><p class="caption">Paus av paper-motorn annullerar inte order som redan skickats till Kraken.</p></article>
       </div>
       </div>
-      <article class="panel"><div class="section-heading"><div><h3>Agenter</h3><p id="agent-summary" class="muted">Inväntar servern</p></div><button id="view-all-agents" type="button">Visa agentdetaljer</button></div><div id="agent-compact" class="agent-grid"></div></article>
+      <article class="panel paper-ui"><div class="section-heading"><div><h3>Agenter</h3><p id="agent-summary" class="muted">Inväntar servern</p></div><button id="view-all-agents" type="button">Visa agentdetaljer</button></div><div id="agent-compact" class="agent-grid"></div></article>
       <article class="panel"><div class="section-heading"><h3>Agenternas kryptobevakning</h3><button type="button" data-view="decisions">Visa agentrapporter &amp; CHEF-meddelanden</button></div><p id="overview-advisory">Inväntar kryptodata. Ingen insättning krävs.</p></article>
     </section>
 

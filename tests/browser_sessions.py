@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory() as tmp:
             assert len(private.orders)==1
             private.settle('ORDER-1')
             if os.environ.get('JARVIS_TEST_SCREENSHOT'):page.screenshot(path=os.environ['JARVIS_TEST_SCREENSHOT'],full_page=True)
-            page.locator('#session-stop').click()
+            page.locator('#overview-stop').click()
             page.wait_for_function("() => document.querySelector('#session-state').textContent.includes('Avslutar')")
             runtime.exchange.sessions.tick()
             page.wait_for_function("() => document.querySelector('#session-state').textContent.includes('innehav behållna')")

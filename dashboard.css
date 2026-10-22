@@ -63,3 +63,18 @@ h2{letter-spacing:.025em}.eyebrow{letter-spacing:.16em;font-weight:600}
 .badge{font-weight:500;letter-spacing:.025em}.panel,.status-card,.stat{box-shadow:inset 0 1px 0 #b0f3ff05}
 input,select,textarea{font-family:var(--font-ui)}svg text{font-family:var(--font-data)}
 @media(max-width:760px){h1{font-size:23px}.brand{gap:10px}.brand-mark{width:40px;height:40px;font-size:17px}.brand>div{min-width:0}}
+
+/* Live overview: source freshness stays visible beside financial data. */
+.live-status-strip{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.live-overview>.caption{margin:10px 0 20px}
+.overview-live-columns{margin-top:20px}
+.live-agent-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.overview-price{padding:15px 0;border-bottom:1px solid var(--line)}
+.overview-price:last-child{border-bottom:0}.overview-price>.badge{margin-left:12px}
+.overview-quote{font-family:var(--font-data);font-size:20px;font-weight:500;margin:12px 0 0;overflow-wrap:anywhere}
+.overview-price p:last-child{margin-bottom:0}
+.data-stale{border-left:2px solid var(--warn);padding-left:10px}
+#overview-chef dd{max-width:65%;overflow-wrap:anywhere}
+#overview-live-agents p{margin-top:9px}
+#overview-fills,#overview-orders{max-height:360px;overflow:auto}
+@media(max-width:760px){.live-agent-grid{grid-template-columns:1fr}.overview-quote{font-size:17px}}
