@@ -341,6 +341,9 @@ def make_server(runtime, port=8000):
             path = urlsplit(self.path).path
             if path == '/api/state':
                 self.send(200, runtime.store.snapshot())
+            elif path == '/api/overview':
+                from .overview import snapshot
+                self.send(200,snapshot(runtime))
             elif path == '/api/exchange':
                 self.send(200,runtime.exchange.status())
             elif path == '/api/export/supervision.jsonl':

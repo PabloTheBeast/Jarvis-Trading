@@ -153,8 +153,17 @@ class LiveService:
         open_orders=self.private.call('OpenOrders',{'trades':'true'}).get('open')
         if not isinstance(open_orders,dict):
             raise ExchangeError('Öppna order kan inte stämmas av.')
-        self.last_account=dict(balances=balances,openOrderCount=len(open_orders),currency='EUR')
-        self.last_check=datetime.now(timezone.utc).isoformat()
+        checked=datetime.now(timezone.utc).isoformat()
+        display=[]
+        for ident,order in open_orders.items():
+            if not isinstance(order,dict) or not isinstance(order.get('descr',{}),dict):
+                raise ExchangeError('Öppna order har ogiltigt format.')
+            desc=order.get('descr',{})
+            display.append(dict(id=str(ident),pair=str(desc.get('pair',''))[:32],side=str(desc.get('type',''))[:12],
+                volume=str(order.get('vol','')),filled=str(order.get('vol_exec','')),price=str(desc.get('price','')),
+                status=str(order.get('status','open'))[:24]))
+        self.last_account=dict(balances=balances,openOrderCount=len(open_orders),currency='EUR',checkedAt=checked,openOrders=display[:100])
+        self.last_check=checked
         self.last_error=None
         return balances,open_orders
 
