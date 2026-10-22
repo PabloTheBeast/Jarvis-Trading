@@ -60,7 +60,9 @@ class MarketStream:
                     with self.lock:
                         self.quotes={};self.connected=True;self.error=None
                     for channel in ('ticker','trade'):
-                        sock.send(json.dumps(dict(method='subscribe',params=dict(channel=channel,symbol=['BTC/EUR','ETH/EUR'],snapshot=True))))
+                        params=dict(channel=channel,symbol=['BTC/EUR','ETH/EUR'],snapshot=True)
+                        if channel=='ticker':params['event_trigger']='bbo'
+                        sock.send(json.dumps(dict(method='subscribe',params=params)))
                     delay=1
                     while not self.quit.is_set():
                         try:raw=sock.recv(timeout=2)

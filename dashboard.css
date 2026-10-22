@@ -78,3 +78,7 @@ input,select,textarea{font-family:var(--font-ui)}svg text{font-family:var(--font
 #overview-live-agents p{margin-top:9px}
 #overview-fills,#overview-orders{max-height:360px;overflow:auto}
 @media(max-width:760px){.live-agent-grid{grid-template-columns:1fr}.overview-quote{font-size:17px}}
+.market-range-stats{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+#market-live-stats,#market-live-extra{margin-top:18px}
+#market-live-extra .stat strong{font-size:clamp(14px,1.4vw,19px);overflow-wrap:anywhere}
+#market-trades{max-height:320px;overflow:auto}

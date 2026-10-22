@@ -77,6 +77,7 @@ function setTab(name,focus=false){
   if(focus)$('nav-'+name).focus();
   if((name==='decisions'||name==='history'&&app.paperMode)&&app.state?.notifications.some(n=>!n.read))command('read-notices');
   if(name==='exchange')refreshExchange();
+  if(name==='market')refreshLiveMarket();
 }
 function toast(message){
   const item=node('div',{class:'toast'},[node('button',{text:'×','aria-label':'Stäng meddelande',click:()=>item.remove()}),node('strong',{text:'Estman CHEF'}),node('p',{text:message})]);
@@ -253,37 +254,47 @@ function renderHistory(){
 function renderMarket(){
   const s=app.state,symbol=$('market-symbol').value,analysis=s.marketAnalysis?.[symbol],book=s.marketData.orderBooks?.[symbol],rate=s.marketData.eurSek;
   const name=symbol==='BTC-SIM'?'BTC / EUR':'ETH / EUR';
-  text('market-chart-title',name+' · 5 minuter');
-  text('market-quality',analysis?analysis.reason:'Analys saknas. Uppdatera marknaden för att läsa in analysen.');
-  $('market-quality').className='notice'+(!dataFresh()||analysis?.status!=='ready'?' warn':'');
+  if(app.paperMode)text('market-chart-title',name+' · 5 minuter');
+  const analysisAge=analysis?.closedAt?(app.serverTime+(performance.now()-app.received)-Date.parse(analysis.closedAt))/1000:null;
+  const signalCurrent=Boolean(dataFresh()&&analysis?.status==='ready'&&analysisAge!==null&&analysisAge>=0&&analysisAge<300);
+  text('analysis-quality',signalCurrent?analysis.reason:'Agentanalysen är inte aktuell. Senast avslutade stapel: '+localTime(analysis?.closedAt)+'. Inväntar färskt analysunderlag.');
+  $('analysis-quality').className='notice'+(!signalCurrent?' warn':'');
+  $('analysis-indicators').classList.toggle('data-stale',!signalCurrent);
   $('analysis-indicators').replaceChildren(metric('SMA 20',euro(analysis?.sma20),'20 avslutade staplar'),metric('SMA 50',euro(analysis?.sma50),'50 avslutade staplar'),
     metric('RSI 14',analysis?.rsi14?.toFixed(1).replace('.',',')||'—','Historiskt momentum'),metric('ATR 14',finite(analysis?.atrPercent)?Number(analysis.atrPercent).toFixed(3).replace('.',',')+' %':'—','Historiskt prisintervall'));
   facts('market-quotes',[['Köpsida, EUR',book&&rate?euro(book.bids[0][0]/rate):'—'],['Säljsida, EUR',book&&rate?euro(book.asks[0][0]/rate):'—'],
     ['Spread',book?percent(book.asks[0][0]/book.bids[0][0]-1):'—'],['Kursmarkering, SEK',currentPrice(symbol)?money(currentPrice(symbol)):'—'],
     ['ECB EUR/SEK',rate?quantity(rate)+' · '+s.marketData.fxDate:'—'],['Data hämtade',localTime(s.marketData.fetchedAt)],['Senast avslutade stapel',localTime(analysis?.closedAt)]]);
-  $('market-signals').replaceChildren(...(analysis?.status==='ready'?Object.entries(analysis.signals).map(([name,value])=>node('div',{class:'event'},[
+  $('market-signals').replaceChildren(...(signalCurrent?Object.entries(analysis.signals).map(([name,value])=>node('div',{class:'event'},[
     node('strong',{text:name}),badge(value||'Avvakta',value==='BUY'?'good':value==='SELL'?'warn':''),node('p',{class:'caption',text:analysis.reasons[name]})])):
     [node('p',{class:'muted',text:analysis?.reason||'Ingen verifierad analys ännu.'})]));
   rows('prices',app.assets.map(a=>[a.id,a.type==='Krypto'?(s.marketData.connector==='kraken-public'?'Kraken, senast hämtad mittkurs':'Startreferens · ej börsdata'):'Syntetisk modell',currentPrice(a.id)?money(currentPrice(a.id)):'—',percent(s.returns[a.id])]),'Inga priser.',4);
-  candleChart(analysis?.candles||[]);
+  if(app.paperMode)candleChart(analysis?.candles||[]);
+  else if(typeof liveMarket!=='undefined'&&liveMarket.data)renderLiveMarket();
 }
-function candleChart(all){
+function candleChart(all,limit=60){
   const chart=$('market-chart');chart.replaceChildren();
-  const candles=all.slice(-60);
+  const candles=all.slice(-limit);
   if(!candles.length){const empty=svgNode('text',{x:450,y:145,'text-anchor':'middle'});empty.textContent='Inväntar avslutade Kraken-staplar';chart.append(empty);return;}
   const min=Math.min(...candles.map(r=>r.low)),max=Math.max(...candles.map(r=>r.high)),span=Math.max(max-min,max*.001);
   const y=value=>255-(value-min)/span*215,step=800/candles.length;
   for(let i=0;i<5;i++){
     const level=min+span*i/4;
     chart.append(svgNode('line',{x1:65,x2:890,y1:y(level),y2:y(level),stroke:'#2c3d54','stroke-dasharray':'3 5'}));
-    const label=svgNode('text',{x:2,y:y(level)+4});label.textContent=quantity(level);chart.append(label);
+    const label=svgNode('text',{x:2,y:y(level)+4});label.textContent=Number(level).toLocaleString('sv-SE',{maximumFractionDigits:2});chart.append(label);
   }
   candles.forEach((c,i)=>{
     const x=75+step*i,color=c.close>=c.open?'#8be0b6':'#ff9baa';
     const wick=svgNode('line',{x1:x,x2:x,y1:y(c.high),y2:y(c.low),stroke:color});
-    const body=svgNode('rect',{x:x-Math.max(2,step*.5)/2,y:Math.min(y(c.open),y(c.close)),width:Math.max(2,step*.5),height:Math.max(1,Math.abs(y(c.open)-y(c.close))),fill:color});
-    const title=svgNode('title');title.textContent=localTime(c.time*1000)+' · O '+c.open+' H '+c.high+' L '+c.low+' C '+c.close+' EUR';body.append(title);chart.append(wick,body);
+    const body=svgNode('rect',{x:x-Math.max(2,step*.5)/2,y:Math.min(y(c.open),y(c.close)),width:Math.max(2,step*.5),height:Math.max(1,Math.abs(y(c.open)-y(c.close))),fill:color,opacity:c.closed===false?.45:1});
+    const title=svgNode('title');title.textContent=localTime(c.time*1000)+' · O '+c.open+' H '+c.high+' L '+c.low+' C '+c.close+' EUR'+(c.closed===false?' · PÅGÅENDE':' · avslutad');body.append(title);chart.append(wick,body);
   });
+  if(limit>60){
+    for(const [value,label,color,offset] of [[max,'HIGH','#67d1d3',-8],[min,'LOW','#ffd399',-8]]){
+      chart.append(svgNode('line',{x1:65,x2:890,y1:y(value),y2:y(value),stroke:color,'stroke-dasharray':'5 5',opacity:.65}));
+      const tag=svgNode('text',{x:888,y:y(value)+offset,'text-anchor':'end'});tag.textContent=label+' · '+euro(value);tag.style.fill=color;chart.append(tag);
+    }
+  }
   for(const [c,x] of [[candles[0],65],[candles.at(-1),750]]){const label=svgNode('text',{x,y:285});label.textContent=localTime(c.time*1000).slice(6,11);chart.append(label);}
 }
 function renderDecisions(){
@@ -507,7 +518,7 @@ $('enable-alerts').onclick=async()=>{
     if(!app.desktopAlerts)showError('Webbläsaren tillåter inte skrivbordsnotiser. CHEF:s meddelanden sparas ändå i Beslut och Historik.');
   }catch(error){showError('Notiser kunde inte aktiveras. Meddelanden finns i dashboarden.');}
 };
-$('refresh-market').onclick=()=>command('refresh-market');
+$('refresh-market').onclick=async()=>{if(app.paperMode)return command('refresh-market');try{await post('/api/market-live/refresh');await refreshLiveMarket();}catch(e){showError(e.message);}};
 $('exchange-check').onclick=()=>exchangeAction('check');
 $('live-form').addEventListener('submit',event=>{
   event.preventDefault();
@@ -658,3 +669,58 @@ $('overview-stop').onclick=async()=>{
   catch(e){showError(e.message);}
 };
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){overviewFreshness();refreshLiveOverview();}});
+
+// Native-EUR display feed; independent of the closed-bar strategy engine.
+const liveMarket={data:null,received:0,polling:false,error:null};
+function marketNow(){return liveMarket.data?Date.parse(liveMarket.data.serverTime)+(performance.now()-liveMarket.received):Date.now();}
+function marketAge(stamp){const value=(marketNow()-Date.parse(stamp))/1000;return stamp&&Number.isFinite(value)&&value>=0?value:null;}
+function renderLiveMarket(){
+  if(app.paperMode)return;
+  const d=liveMarket.data,p=d?.instruments.find(p=>p.symbol===$('market-symbol').value);
+  const connection=Boolean(d&&!liveMarket.error&&performance.now()-liveMarket.received<5000);
+  if(!p){text('market-quality',liveMarket.error||'Inväntar verifierade Kraken-kurser.');return;}
+  const t=p.ticker,q=p.quote,quoteAge=marketAge(q.checkedAt),statsAge=marketAge(t?.checkedAt),chartAge=marketAge(p.chartCheckedAt);
+  const quoteFresh=connection&&q.fresh&&quoteAge!==null&&quoteAge<=(q.source==='WebSocket'?5:10);
+  const statsFresh=connection&&p.statsFresh&&statsAge!==null&&statsAge<=10;
+  const chartFresh=connection&&p.chartFresh&&chartAge!==null&&chartAge<=45;
+  const elapsed=stamp=>{const value=marketAge(stamp);return value===null?'ej hämtad':Math.floor(value)+' s sedan';};
+  text('market-quality',!connection?'Anslutningen till marknadsvyn saknas. Visade värden är senast kända.':quoteFresh?
+    p.pair+' · '+q.source+' aktuell · kurs '+elapsed(q.checkedAt)+(statsFresh?' · 24h-statistik aktuell':' · 24h-statistik ej aktuell'):
+    (p.error||'Kursdata saknas eller är gamla. Visade priser är inte aktuella.'));
+  $('market-quality').className='notice'+(!quoteFresh||!statsFresh?' warn':'');
+  $('market-live-stats').replaceChildren(metric('Senaste avslutspris',euro(t?.lastEUR),'REST · '+elapsed(t?.checkedAt)),
+    metric('High · rullande 24 h',euro(t?.high24hEUR),statsFresh?'Högsta avslutspris · aktuell statistik':'Senast känt · ej aktuell statistik'),
+    metric('Low · rullande 24 h',euro(t?.low24hEUR),statsFresh?'Lägsta avslutspris · aktuell statistik':'Senast känt · ej aktuell statistik'),
+    metric('Förändring i dag · UTC',finite(t?.changeTodayPercent)?percent(Number(t.changeTodayPercent)/100):'—','Från öppningspriset kl. 00:00 UTC · inte 24 h'));
+  $('market-live-extra').replaceChildren(metric('Köpbud / säljbud',euro(q.bidEUR)+' / '+euro(q.askEUR),q.source+' · '+elapsed(q.checkedAt)),
+    metric('Volym · rullande 24 h',quantity(t?.volume24h),p.pair.startsWith('BTC')?'BTC':'ETH'),
+    metric('VWAP · rullande 24 h',euro(t?.vwap24hEUR),'Volymvägt genomsnittspris'),
+    metric('Spread',finite(q.bidEUR)&&finite(q.askEUR)?Number((Number(q.askEUR)/Number(q.bidEUR)-1)*100).toLocaleString('sv-SE',{maximumFractionDigits:4})+' %':'—',quoteFresh?'Aktuellt köp-/säljbud':'Bud ej aktuella'));
+  $('market-live-stats').classList.toggle('data-stale',!statsFresh);
+  $('market-live-extra').classList.toggle('data-stale',!quoteFresh||!statsFresh);
+  text('market-live-time','Kurs hämtad: '+tradeTime(q.checkedAt)+' · 24h-statistik: '+tradeTime(t?.checkedAt)+'. REST-ticker cirka var 3:e sekund, graf cirka var 15:e sekund. Sidan läser flödet varje sekund.');
+  const hours=Number($('market-range').value),start=marketNow()/1000-hours*3600;
+  const candles=p.candles.filter(c=>c.time+300>start&&c.time*1000<=marketNow()).map(c=>({...c,closed:(c.time+300)*1000<=marketNow()}));
+  const high=candles.length?Math.max(...candles.map(c=>c.high)):null,low=candles.length?Math.min(...candles.map(c=>c.low)):null;
+  const coverage=candles.length&&candles[0].time<=start+300;
+  text('market-chart-title',p.pair+' · '+hours+' h · 5-minutersstaplar');
+  candleChart(candles,350);
+  $('market-chart').classList.toggle('data-stale',!chartFresh);
+  $('market-chart').setAttribute('aria-label',p.pair+' graf '+hours+' timmar. Högsta '+euro(high)+', lägsta '+euro(low)+'.');
+  $('market-range-stats').replaceChildren(badge('Grafens high: '+euro(high),'good'),badge('Grafens low: '+euro(low),'warn'),badge(candles.at(-1)?.closed===false?'Pågående stapel ingår':'Endast avslutade staplar'));
+  text('market-chart-state',(chartFresh?'Grafdata aktuella':'Grafdata saknas eller är gamla')+' · hämtat '+elapsed(p.chartCheckedAt)+' · '+candles.length+' staplar'+
+    (!coverage?' · hela perioden finns inte i underlaget':'')+(p.gaps?' · luckor finns i OHLC-historiken':'')+(p.chartError?' · '+p.chartError:''));
+  $('market-trades').replaceChildren(...(p.trades.length?p.trades.map(t=>node('div',{class:'event'},[node('small',{text:tradeTime(t.at)}),node('strong',{text:(t.side==='buy'?'Köp':'Sälj')+' · '+euro(t.price)+' · '+quantity(t.quantity)+' '+p.pair.split('/')[0]})])):
+    [node('p',{text:d.stream.enabled?'Inga mottagna marknadsaffärer. '+(d.stream.error||'Inväntar WebSocket-data.'):'Publik WebSocket är avstängd. REST-kurser och high/low uppdateras ändå.'})]));
+}
+async function refreshLiveMarket(){
+  if(liveMarket.polling)return;
+  liveMarket.polling=true;
+  try{liveMarket.data=await getJSON('/api/market-live');liveMarket.received=performance.now();liveMarket.error=null;renderLiveMarket();}
+  catch(e){liveMarket.error=e.message;renderLiveMarket();}
+  finally{liveMarket.polling=false;}
+}
+$('market-range').onchange=renderLiveMarket;
+$('market-symbol').addEventListener('change',renderLiveMarket);
+refreshLiveMarket();
+setInterval(()=>{if(app.tab==='market'){refreshLiveMarket();renderLiveMarket();}},1000);
