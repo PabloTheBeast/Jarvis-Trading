@@ -79,7 +79,7 @@ function setTab(name,focus=false){
   if(name==='exchange')refreshExchange();
 }
 function toast(message){
-  const item=node('div',{class:'toast'},[node('button',{text:'×','aria-label':'Stäng meddelande',click:()=>item.remove()}),node('strong',{text:'JARVIS CHEF'}),node('p',{text:message})]);
+  const item=node('div',{class:'toast'},[node('button',{text:'×','aria-label':'Stäng meddelande',click:()=>item.remove()}),node('strong',{text:'Estman CHEF'}),node('p',{text:message})]);
   $('toast-stack').prepend(item);
   while($('toast-stack').children.length>3)$('toast-stack').lastElementChild.remove();
 }
@@ -105,7 +105,7 @@ function apply(snapshot){
     if(entry.kind==='CRYPTO_SIGNAL'&&(!dataFresh()||Date.parse(entry.validUntil)<=app.serverTime))continue;
     toast(entry.msg+(entry.kind==='CRYPTO_SIGNAL'?' Gäller till '+localTime(entry.validUntil)+'.':''));
     if(entry.kind==='CRYPTO_SIGNAL'&&app.desktopAlerts&&window.Notification?.permission==='granted'){
-      try{new Notification('JARVIS CHEF',{body:entry.msg+' Gäller till '+localTime(entry.validUntil)+'.',tag:entry.id});}catch(error){app.desktopAlerts=false;}
+      try{new Notification('Estman CHEF',{body:entry.msg+' Gäller till '+localTime(entry.validUntil)+'.',tag:entry.id});}catch(error){app.desktopAlerts=false;}
     }
   }
   app.notices=notices;
@@ -403,11 +403,11 @@ function renderExchange(){
   const h=e.tradeHistory||{executions:[],closed:[],open:[],unmatchedSales:[]},balances=e.account?.balances;
   $('real-overview').replaceChildren(metric('EUR-saldo',balances?euro(balances.EUR.balance):'—','Verkligt saldo från Kraken'),
     metric('BTC-saldo',balances?quantity(balances.XBT.balance):'—'),metric('ETH-saldo',balances?quantity(balances.ETH.balance):'—'),
-    metric('Bekräftade avslut',h.executions.length,'Bara verifierade JARVIS-order'));
+    metric('Bekräftade avslut',h.executions.length,'Bara verifierade Estman-order'));
   text('real-history-status',e.error||e.tickets.some(t=>t.historyError)?'Historiken kunde inte uppdateras fullständigt. Tidigare verifierade affärer visas; kontrollera konto och orderavstämning.':
-    'Visar bara bekräftade avslut för order skickade via JARVIS. Senaste kontokontroll: '+(e.checkedAt?tradeTime(e.checkedAt):'ännu inte hämtat')+'.');
+    'Visar bara bekräftade avslut för order skickade via Estman Investments. Senaste kontokontroll: '+(e.checkedAt?tradeTime(e.checkedAt):'ännu inte hämtat')+'.');
   rows('real-roundtrips',h.closed.map(t=>[ (t.agentId||'Manuell')+' · '+t.pair,tradeTime(t.boughtAt),tradeTime(t.soldAt),quantity(t.quantity),euro(t.netEUR)]),'Inga matchade köp och försäljningar ännu.',5);
-  rows('real-open-lots',h.open.map(t=>[(t.agentId||'Manuell')+' · '+t.pair,tradeTime(t.boughtAt),quantity(t.quantity),euro(t.costIncludingFeeEUR)]),'Inga verifierade öppna köp i JARVIS-historiken.',4);
+  rows('real-open-lots',h.open.map(t=>[(t.agentId||'Manuell')+' · '+t.pair,tradeTime(t.boughtAt),quantity(t.quantity),euro(t.costIncludingFeeEUR)]),'Inga verifierade öppna köp i Estman-historiken.',4);
   rows('real-executions',h.executions.map(t=>[tradeTime(t.executedAt),t.agentId||'Manuell',t.pair,t.side==='buy'?'Köp':'Sälj',quantity(t.quantity),euro(t.priceEUR),euro(t.feeEUR),node('span',{class:'mono',text:t.tradeId})]),'Inga verkliga avslut. Signaler, förhandsgranskningar och ofyllda order är inga affärer.',8);
   $('real-unmatched').replaceChildren(...(h.unmatchedSales.length?h.unmatchedSales.map(t=>node('p',{text:t.pair+' · '+quantity(t.quantity)+' · sålt '+tradeTime(t.soldAt)+' · '+t.reason})):[node('p',{text:'Inga försäljningar med okänt inköp.'})]));
   text('live-mode',e.monitorOnly?'Bevakningsläge · handel avstängd':e.liveEnabled?'Live tillåtet · ägargodkännande krävs':'Live avstängt');

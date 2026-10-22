@@ -367,6 +367,8 @@ def make_server(runtime, port=8000):
                 self.send(200, (ROOT/'index (2).html').read_bytes(), 'text/html; charset=utf-8')
             elif path == '/dashboard.css':
                 self.send(200,(ROOT/'dashboard.css').read_bytes(),'text/css; charset=utf-8')
+            elif path in {'/assets/fonts/ChakraPetch-Bold.ttf','/assets/fonts/ChakraPetch-Medium.ttf','/assets/fonts/ChakraPetch-Regular.ttf','/assets/fonts/ChakraPetch-SemiBold.ttf','/assets/fonts/IBMPlexMono-Medium.ttf','/assets/fonts/IBMPlexMono-Regular.ttf'}:
+                self.send(200,(ROOT/path.lstrip('/')).read_bytes(),'font/ttf')
             elif path == '/dashboard.js':
                 self.send(200, (ROOT/'dashboard.js').read_bytes(), 'text/javascript; charset=utf-8')
             else:
