@@ -153,6 +153,9 @@ class Runtime:
         self.exchange.monitoring=not self.paper_enabled or self.monitor_only
         self.exchange.sessions.enabled=self.exchange.sessions.enabled and not self.paper_enabled
         self.monitor_thread=None
+        from .market_feed import MarketFeed
+        real_market=isinstance(self.market,Kraken)
+        self.market_feed=MarketFeed(self.exchange.stream,client=self.market if real_market else None,enabled=real_market)
 
     def monitor_market(self):
         prices,metadata=self.prices()
@@ -287,6 +290,7 @@ class Runtime:
             deadline = time.monotonic()+snap['autoPace']/1000
 
     def start(self):
+        if not self.paper_enabled:self.market_feed.start()
         self.exchange.stream.start()
         self.exchange.execution_stream.start()
         if self.monitor_only or not self.paper_enabled:
@@ -299,6 +303,7 @@ class Runtime:
     def stop(self):
         self.quit.set()
         self.exchange.sessions.shutdown()
+        self.market_feed.stop()
         self.exchange.stream.stop()
         self.exchange.execution_stream.stop()
         if self.monitor_thread:
@@ -341,6 +346,8 @@ def make_server(runtime, port=8000):
             path = urlsplit(self.path).path
             if path == '/api/state':
                 self.send(200, runtime.store.snapshot())
+            elif path == '/api/market-live':
+                self.send(200,runtime.market_feed.status())
             elif path == '/api/overview':
                 from .overview import snapshot
                 self.send(200,snapshot(runtime))
@@ -398,6 +405,10 @@ def make_server(runtime, port=8000):
                 if not 1 <= len(key) <= 100:
                     raise ValueError('Idempotency-Key required')
                 path = urlsplit(self.path).path
+                if path == '/api/market-live/refresh':
+                    runtime.market_feed.request_refresh()
+                    self.send(202,dict(queued=True))
+                    return
                 if path == '/api/supervision/quarantine':
                     self.send(200,runtime.exchange.governance.quarantine(data))
                     return

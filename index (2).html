@@ -74,11 +74,16 @@
     </section>
 
     <section class="tabview" id="tab-market" role="tabpanel" aria-labelledby="nav-market" hidden>
-      <div class="page-heading"><div><p class="eyebrow">KRAKEN · SPOT · EUR</p><h2>Marknadsanalys</h2><p>Analys av avslutade femminutersstaplar. Uppdateringshastigheten ändrar inte analysens tidsfönster.</p></div><div class="toolbar"><button id="refresh-market" type="button">Uppdatera marknad</button><label>Instrument<select id="market-symbol"><option value="BTC-SIM">BTC / EUR</option><option value="ETH-SIM">ETH / EUR</option></select></label></div></div>
-      <div id="market-quality" class="notice" role="status">Uppdatera marknaden för att läsa in analysen.</div>
-      <article class="panel"><div class="section-heading"><h3 id="market-chart-title">BTC / EUR · 5 minuter</h3><span class="muted">Avslutade staplar</span></div><svg id="market-chart" viewBox="0 0 900 300" role="img" aria-label="Fem-minuters OHLC-priser i EUR"></svg><p class="caption">Köp-/säljsidor och analys anges i EUR. SEK-referenser använder ECB:s daterade kurs.</p></article>
+      <div class="page-heading"><div><p class="eyebrow">KRAKEN · SPOT · EUR</p><h2>Marknad · live</h2><p>BTC och ETH direkt från Kraken. Kurser och high/low uppdateras separat från agenternas analys.</p></div><div class="toolbar"><button id="refresh-market" type="button">Uppdatera marknad</button><label>Instrument<select id="market-symbol"><option value="BTC-SIM">BTC / EUR</option><option value="ETH-SIM">ETH / EUR</option></select></label></div></div>
+      <div id="market-quality" class="notice" role="status">Ansluter till marknadsflödet…</div>
+      <div id="market-live-stats" class="stats"></div>
+      <div id="market-live-extra" class="stats small-stats"></div>
+      <p id="market-live-time" class="caption"></p>
+      <article class="panel"><div class="section-heading"><h3 id="market-chart-title">BTC / EUR · 5 minuter</h3><label>Grafperiod<select id="market-range"><option value="1">1 timme</option><option value="6" selected>6 timmar</option><option value="24">24 timmar</option></select></label></div><svg id="market-chart" viewBox="0 0 900 300" role="img" aria-label="Fem-minuters OHLC-priser i EUR"></svg><div id="market-range-stats" class="market-range-stats"></div><p id="market-chart-state" class="caption">Inväntar OHLC-data.</p><p class="caption">Heldragna staplar är avslutade. Den tonade stapeln är pågående och kan ändras. Grafperiodens high/low skiljer sig från rullande 24 timmar.</p></article>
+      <p id="analysis-quality" class="notice">Inväntar avslutad femminutersanalys.</p>
       <div id="analysis-indicators" class="stats"></div>
       <div class="two-columns"><article class="panel"><h3>Orderdjup &amp; datakvalitet</h3><dl id="market-quotes" class="facts"></dl></article><article class="panel"><h3>Strategiernas observationer</h3><div id="market-signals"></div><p class="caption">Regelbaserade signaler, inte prognoser eller sannolikheter för vinst.</p></article></div>
+      <article class="panel"><h3>Senaste marknadsaffärer · WebSocket</h3><p class="caption">Genomförda affärer på Kraken, inte ditt kontos order. Kräver aktiverad publik WebSocket-ström.</p><div id="market-trades"></div></article>
       <article class="panel paper-ui"><h3>Alla instrument</h3><div class="scroll"><table><thead><tr><th>Instrument</th><th>Datakälla</th><th>Paper-markering, SEK</th><th>Senaste steg</th></tr></thead><tbody id="prices"></tbody></table></div></article>
     </section>
 
